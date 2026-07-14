@@ -1,3 +1,5 @@
+use clap::Parser;
+
 fn main() {
-    println!("bleat");
+    let _cli = bleat::cli::Cli::parse();
 }
