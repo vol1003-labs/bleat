@@ -93,3 +93,86 @@ macro_rules! impl_string_conversion {
 impl_string_conversion!(Slug);
 impl_string_conversion!(Role);
 impl_string_conversion!(MessageType);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slug_accepts_only_safe_identifiers_up_to_64_bytes() {
+        let valid = ["a", "0", "feature-2", &"a".repeat(64)];
+        let invalid = [
+            "",
+            "-feature",
+            "Feature",
+            "feature_name",
+            "..",
+            &"a".repeat(65),
+        ];
+
+        for value in valid {
+            assert!(Slug::parse(value).is_ok(), "`{value}` should be valid");
+        }
+        for value in invalid {
+            assert!(Slug::parse(value).is_err(), "`{value}` should be invalid");
+        }
+    }
+
+    #[test]
+    fn role_accepts_only_safe_identifiers_up_to_32_bytes() {
+        let valid = ["a", "codex", "reviewer-2", &"a".repeat(32)];
+        let invalid = [
+            "",
+            "2codex",
+            "-codex",
+            "Codex",
+            "code_review",
+            &"a".repeat(33),
+        ];
+
+        for value in valid {
+            assert!(Role::parse(value).is_ok(), "`{value}` should be valid");
+        }
+        for value in invalid {
+            assert!(Role::parse(value).is_err(), "`{value}` should be invalid");
+        }
+    }
+
+    #[test]
+    fn message_type_accepts_only_safe_identifiers_up_to_32_bytes() {
+        let valid = ["a", "question", "custom-type", &"a".repeat(32)];
+        let invalid = [
+            "",
+            "2question",
+            "-question",
+            "Question",
+            "custom_type",
+            &"a".repeat(33),
+        ];
+
+        for value in valid {
+            assert!(
+                MessageType::parse(value).is_ok(),
+                "`{value}` should be valid"
+            );
+        }
+        for value in invalid {
+            assert!(
+                MessageType::parse(value).is_err(),
+                "`{value}` should be invalid"
+            );
+        }
+    }
+
+    #[test]
+    fn validated_identifiers_serialize_as_plain_strings() {
+        let role = Role::parse("codex").expect("fixture should be valid");
+
+        let json = serde_json::to_string(&role).expect("role should serialize");
+        let decoded: Role = serde_json::from_str(&json).expect("role should deserialize");
+
+        assert_eq!(json, r#""codex""#);
+        assert_eq!(decoded, role);
+        assert_eq!(decoded.as_str(), "codex");
+    }
+}
