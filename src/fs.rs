@@ -117,8 +117,15 @@ fn process_is_dead(pid: i32) -> Result<bool, BleatError> {
 }
 
 fn lock_directory_is_old(lock_dir: &Path, stale_after: Duration) -> Result<bool, BleatError> {
-    let modified = std_fs::metadata(lock_dir)
-        .and_then(|metadata| metadata.modified())
+    let metadata = match std_fs::metadata(lock_dir) {
+        Ok(metadata) => metadata,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(source) => {
+            return Err(io_error("read session lock metadata", lock_dir, source));
+        }
+    };
+    let modified = metadata
+        .modified()
         .map_err(|source| io_error("read session lock metadata", lock_dir, source))?;
     Ok(SystemTime::now()
         .duration_since(modified)
@@ -337,6 +344,17 @@ mod tests {
 
         SessionLock::acquire_with_policy(sandbox.path(), test_lock_policy(Duration::ZERO))
             .expect("old malformed lock should be reclaimed");
+    }
+
+    #[test]
+    fn a_lock_released_during_stale_inspection_is_not_an_error() {
+        let sandbox = tempdir().expect("sandbox should be created");
+        let released_lock = sandbox.path().join(".lock");
+
+        let stale = stale_lock(&released_lock, Duration::from_secs(30))
+            .expect("a concurrently released lock should be retried");
+
+        assert!(!stale);
     }
 
     fn test_lock_policy(stale_after: Duration) -> LockPolicy {
