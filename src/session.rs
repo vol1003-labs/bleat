@@ -10,6 +10,7 @@ use serde_json::Value;
 use crate::error::BleatError;
 use crate::fs::atomic_replace;
 use crate::identity::{Role, Slug};
+use crate::runtime::RuntimeHandle;
 
 pub const SESSION_VERSION: u32 = 1;
 
@@ -79,6 +80,26 @@ pub fn create_session(
     role: Role,
     created: DateTime<FixedOffset>,
 ) -> Result<SessionPath, BleatError> {
+    create_session_with_runtime_handle(root, slug, role, created, None)
+}
+
+pub(crate) fn create_session_with_handle(
+    root: &Path,
+    slug: Slug,
+    role: Role,
+    created: DateTime<FixedOffset>,
+    handle: &RuntimeHandle,
+) -> Result<SessionPath, BleatError> {
+    create_session_with_runtime_handle(root, slug, role, created, Some(handle))
+}
+
+fn create_session_with_runtime_handle(
+    root: &Path,
+    slug: Slug,
+    role: Role,
+    created: DateTime<FixedOffset>,
+    handle: Option<&RuntimeHandle>,
+) -> Result<SessionPath, BleatError> {
     let bleat_root = root.join(".bleat");
     fs::create_dir_all(&bleat_root)
         .map_err(|source| session_io_error("create bleat directory", &bleat_root, source))?;
@@ -101,7 +122,7 @@ pub fn create_session(
         }
     }
 
-    let result = initialize_session(&path, slug, role, created);
+    let result = initialize_session(&path, slug, role, created, handle);
     if result.is_err() {
         let _ = fs::remove_dir_all(&session_dir);
     }
@@ -113,10 +134,14 @@ fn initialize_session(
     slug: Slug,
     role: Role,
     created: DateTime<FixedOffset>,
+    handle: Option<&RuntimeHandle>,
 ) -> Result<(), BleatError> {
     fs::create_dir(path.messages_dir()).map_err(|source| {
         session_io_error("create messages directory", &path.messages_dir(), source)
     })?;
+    let runtime_handles = handle
+        .map(|handle| BTreeMap::from([(role.clone(), runtime_handle_value(handle))]))
+        .unwrap_or_default();
     let mut roles = BTreeMap::new();
     roles.insert(
         role,
@@ -133,11 +158,25 @@ fn initialize_session(
         store: "file".to_owned(),
         runtime: "herdr".to_owned(),
         roles,
-        runtime_handles: BTreeMap::new(),
+        runtime_handles,
         artifacts: serde_json::json!({}),
         extra: BTreeMap::new(),
     };
     atomic_replace(&path.session_json(), &encode_session(&session)?)
+}
+
+pub(crate) fn runtime_handle_value(handle: &RuntimeHandle) -> Value {
+    let mut value = serde_json::Map::from_iter([
+        (
+            "terminal_id".to_owned(),
+            Value::String(handle.terminal_id.clone()),
+        ),
+        ("pane_id".to_owned(), Value::String(handle.pane_id.clone())),
+    ]);
+    if let Some(agent_name) = &handle.agent_name {
+        value.insert("agent_name".to_owned(), Value::String(agent_name.clone()));
+    }
+    Value::Object(value)
 }
 
 pub fn resolve_session(
