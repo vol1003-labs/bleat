@@ -169,10 +169,15 @@ mod tests {
         let role = Role::parse("codex").expect("fixture should be valid");
 
         let json = serde_json::to_string(&role).expect("role should serialize");
-        let decoded: Role = serde_json::from_str(&json).expect("role should deserialize");
 
         assert_eq!(json, r#""codex""#);
+    }
+
+    #[test]
+    fn validated_identifiers_deserialize_from_plain_strings() {
+        let decoded: Role = serde_json::from_str(r#""codex""#).expect("role should deserialize");
+
+        let role = Role::parse("codex").expect("fixture should be valid");
         assert_eq!(decoded, role);
-        assert_eq!(decoded.as_str(), "codex");
     }
 }

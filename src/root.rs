@@ -40,7 +40,15 @@ mod tests {
         let root = find_project_root(&nested).expect("project root should be found");
 
         assert_eq!(root, project);
-        assert_eq!(bleat_dir(&root), root.join(".bleat"));
+    }
+
+    #[test]
+    fn bleat_dir_appends_the_bleat_directory_to_the_root() {
+        let root = Path::new("project");
+
+        let path = bleat_dir(root);
+
+        assert_eq!(path, root.join(".bleat"));
     }
 
     #[test]

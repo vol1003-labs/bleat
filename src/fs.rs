@@ -196,21 +196,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn atomic_replace_creates_and_replaces_without_leaving_a_temp_file() {
+    fn atomic_replace_creates_a_new_file() {
         let sandbox = tempdir().expect("sandbox should be created");
         let path = sandbox.path().join("session.json");
 
         atomic_replace(&path, b"first").expect("file should be created");
+
         assert_eq!(
             std_fs::read(&path).expect("file should be readable"),
             b"first"
         );
+    }
+
+    #[test]
+    fn atomic_replace_replaces_an_existing_file() {
+        let sandbox = tempdir().expect("sandbox should be created");
+        let path = sandbox.path().join("session.json");
+        std_fs::write(&path, b"first").expect("existing file should be written");
 
         atomic_replace(&path, b"second").expect("file should be replaced");
+
         assert_eq!(
             std_fs::read(&path).expect("file should be readable"),
             b"second"
         );
+    }
+
+    #[test]
+    fn atomic_replace_leaves_no_temporary_file() {
+        let sandbox = tempdir().expect("sandbox should be created");
+        let path = sandbox.path().join("session.json");
+
+        atomic_replace(&path, b"content").expect("file should be created");
+
         assert_eq!(
             std_fs::read_dir(sandbox.path())
                 .expect("directory should be readable")
@@ -291,22 +309,31 @@ mod tests {
     }
 
     #[test]
-    fn malformed_pid_requires_the_lock_directory_to_be_old() {
+    fn malformed_pid_in_a_fresh_lock_is_not_reclaimed() {
         let sandbox = tempdir().expect("sandbox should be created");
         let lock_dir = sandbox.path().join(".lock");
         std_fs::create_dir(&lock_dir).expect("lock should be created");
         std_fs::write(lock_dir.join("pid"), "not-a-pid").expect("broken pid should be recorded");
 
-        let fresh_error = SessionLock::acquire_with_policy(
+        let error = SessionLock::acquire_with_policy(
             sandbox.path(),
             test_lock_policy(Duration::from_secs(30)),
         )
         .expect_err("fresh malformed lock should not be reclaimed");
+
         assert!(
-            fresh_error
+            error
                 .to_string()
                 .contains("timed out acquiring session lock")
         );
+    }
+
+    #[test]
+    fn malformed_pid_in_an_old_lock_is_reclaimed() {
+        let sandbox = tempdir().expect("sandbox should be created");
+        let lock_dir = sandbox.path().join(".lock");
+        std_fs::create_dir(&lock_dir).expect("lock should be created");
+        std_fs::write(lock_dir.join("pid"), "not-a-pid").expect("broken pid should be recorded");
 
         SessionLock::acquire_with_policy(sandbox.path(), test_lock_policy(Duration::ZERO))
             .expect("old malformed lock should be reclaimed");
