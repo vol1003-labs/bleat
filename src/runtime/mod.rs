@@ -4,6 +4,8 @@ use std::path::Path;
 use crate::error::BleatError;
 use crate::identity::{Role, Slug};
 
+pub mod herdr;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RuntimeHandle {
     pub terminal_id: String,
