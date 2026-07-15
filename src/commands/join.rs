@@ -33,7 +33,7 @@ pub fn join(
         });
     session
         .runtime_handles
-        .insert(role, runtime_handle_value(&handle));
+        .insert(role, runtime_handle_value(handle));
     atomic_replace(&session_path.session_json(), &encode_session(&session)?)
 }
 

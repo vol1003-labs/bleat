@@ -88,7 +88,7 @@ pub(crate) fn create_session_with_handle(
     slug: Slug,
     role: Role,
     created: DateTime<FixedOffset>,
-    handle: &RuntimeHandle,
+    handle: RuntimeHandle,
 ) -> Result<SessionPath, BleatError> {
     create_session_with_runtime_handle(root, slug, role, created, Some(handle))
 }
@@ -98,7 +98,7 @@ fn create_session_with_runtime_handle(
     slug: Slug,
     role: Role,
     created: DateTime<FixedOffset>,
-    handle: Option<&RuntimeHandle>,
+    handle: Option<RuntimeHandle>,
 ) -> Result<SessionPath, BleatError> {
     let bleat_root = root.join(".bleat");
     fs::create_dir_all(&bleat_root)
@@ -134,7 +134,7 @@ fn initialize_session(
     slug: Slug,
     role: Role,
     created: DateTime<FixedOffset>,
-    handle: Option<&RuntimeHandle>,
+    handle: Option<RuntimeHandle>,
 ) -> Result<(), BleatError> {
     fs::create_dir(path.messages_dir()).map_err(|source| {
         session_io_error("create messages directory", &path.messages_dir(), source)
@@ -165,16 +165,18 @@ fn initialize_session(
     atomic_replace(&path.session_json(), &encode_session(&session)?)
 }
 
-pub(crate) fn runtime_handle_value(handle: &RuntimeHandle) -> Value {
+pub(crate) fn runtime_handle_value(handle: RuntimeHandle) -> Value {
+    let RuntimeHandle {
+        terminal_id,
+        pane_id,
+        agent_name,
+    } = handle;
     let mut value = serde_json::Map::from_iter([
-        (
-            "terminal_id".to_owned(),
-            Value::String(handle.terminal_id.clone()),
-        ),
-        ("pane_id".to_owned(), Value::String(handle.pane_id.clone())),
+        ("terminal_id".to_owned(), Value::String(terminal_id)),
+        ("pane_id".to_owned(), Value::String(pane_id)),
     ]);
-    if let Some(agent_name) = &handle.agent_name {
-        value.insert("agent_name".to_owned(), Value::String(agent_name.clone()));
+    if let Some(agent_name) = agent_name {
+        value.insert("agent_name".to_owned(), Value::String(agent_name));
     }
     Value::Object(value)
 }

@@ -14,7 +14,7 @@ pub fn init(
     runtime: &impl Runtime,
 ) -> Result<SessionPath, BleatError> {
     let handle = runtime.current_handle()?;
-    create_session_with_handle(root, slug, Role::parse("claude")?, created, &handle)
+    create_session_with_handle(root, slug, Role::parse("claude")?, created, handle)
 }
 
 #[cfg(test)]
