@@ -12,6 +12,12 @@ pub fn join(
     registered: DateTime<FixedOffset>,
     runtime: &impl Runtime,
 ) -> Result<(), BleatError> {
+    if !session_path.directory().is_dir() || !session_path.session_json().is_file() {
+        return Err(BleatError::Usage(format!(
+            "session `{}` does not exist",
+            session_path.slug().as_str()
+        )));
+    }
     let handle = runtime.current_handle()?;
     let _lock = SessionLock::acquire(&session_path.directory())?;
     let mut session = load_session(&session_path.session_json())?;
@@ -144,6 +150,20 @@ mod tests {
     fn joining_the_same_role_replaces_its_runtime_handle_without_duplicating_it() {
         let sandbox = tempdir().expect("sandbox should be created");
         let path = session(sandbox.path());
+        let mut existing = load_session(&path.session_json()).expect("session should load");
+        existing.runtime_handles.insert(
+            role("claude"),
+            serde_json::json!({
+                "terminal_id": "term-old",
+                "pane_id": "pane-old",
+                "agent_name": "stale-agent"
+            }),
+        );
+        fs::write(
+            path.session_json(),
+            crate::session::encode_session(&existing).expect("session should encode"),
+        )
+        .expect("fixture should be written");
         let runtime = FakeRuntime::returning(handle("term-new", "pane-new", None));
 
         join(
@@ -158,8 +178,11 @@ mod tests {
         assert_eq!(persisted.roles.len(), 1);
         assert_eq!(persisted.runtime_handles.len(), 1);
         assert_eq!(
-            persisted.runtime_handles[&role("claude")]["pane_id"],
-            "pane-new"
+            persisted.runtime_handles[&role("claude")],
+            serde_json::json!({
+                "terminal_id": "term-new",
+                "pane_id": "pane-new"
+            })
         );
     }
 
@@ -205,23 +228,43 @@ mod tests {
         assert_eq!(persisted["roles"]["claude"]["future_role_field"], 7);
         assert_eq!(persisted["future_top_field"], true);
         assert_eq!(persisted["artifacts"]["spec"], "spec.md");
+        assert_eq!(
+            persisted["roles"]["codex"],
+            serde_json::json!({
+                "registered": "2026-07-15T11:00:00+09:00",
+                "cmd": ["codex", "--model", "gpt"],
+                "future_codex_field": { "enabled": true }
+            })
+        );
+        assert_eq!(
+            persisted["runtime_handles"]["codex"],
+            serde_json::json!({
+                "terminal_id": "term-codex",
+                "pane_id": "pane-codex",
+                "agent_name": "codex-agent",
+                "future_handle_field": 9
+            })
+        );
     }
 
     #[test]
-    fn joining_a_session_that_no_longer_exists_fails() {
+    fn joining_a_session_that_no_longer_exists_skips_runtime_io_and_reports_usage() {
         let sandbox = tempdir().expect("sandbox should be created");
         let path = session(sandbox.path());
         fs::remove_dir_all(path.directory()).expect("session should be removed");
+        let runtime = FakeRuntime::failing("runtime error must not mask missing session");
 
         let error = join(
             &path,
             role("codex"),
             timestamp("2026-07-16T10:00:00+09:00"),
-            &FakeRuntime::returning(handle("term-new", "pane-new", None)),
+            &runtime,
         )
         .expect_err("missing session should fail");
 
-        assert!(matches!(error, BleatError::Runtime(_)));
+        assert!(matches!(error, BleatError::Usage(_)));
+        assert!(error.to_string().contains("feature"));
+        assert_eq!(runtime.current_handle_calls.get(), 0);
     }
 
     #[test]
@@ -301,10 +344,21 @@ mod tests {
               "registered": "2026-07-15T10:00:00+09:00",
               "cmd": ["claude", "--resume"],
               "future_role_field": 7
+            },
+            "codex": {
+              "registered": "2026-07-15T11:00:00+09:00",
+              "cmd": ["codex", "--model", "gpt"],
+              "future_codex_field": { "enabled": true }
             }
           },
           "runtime_handles": {
-            "claude": { "terminal_id": "term-old", "pane_id": "pane-old" }
+            "claude": { "terminal_id": "term-old", "pane_id": "pane-old" },
+            "codex": {
+              "terminal_id": "term-codex",
+              "pane_id": "pane-codex",
+              "agent_name": "codex-agent",
+              "future_handle_field": 9
+            }
           },
           "artifacts": { "spec": "spec.md" },
           "future_top_field": true
