@@ -110,13 +110,10 @@ impl<R: ProcessRunner> Runtime for HerdrRuntime<R> {
     fn current_handle(&self) -> Result<RuntimeHandle, BleatError> {
         let pane = match self.env_pane_id.as_deref() {
             Some(pane_id) => pane_by_id(self, pane_id)?,
-            None => {
-                let current = pane(
-                    self,
-                    vec![OsString::from("pane"), OsString::from("current")],
-                )?;
-                pane_by_id(self, OsStr::new(&current.pane_id))?
-            }
+            None => pane(
+                self,
+                vec![OsString::from("pane"), OsString::from("current")],
+            )?,
         };
 
         Ok(RuntimeHandle {
@@ -249,14 +246,11 @@ mod tests {
 
     #[test]
     fn current_handle_falls_back_to_current_pane() {
-        let runner = RecordingRunner::new([
-            success(&pane_response(
-                "pane_current",
-                "w1:p7",
-                Some("term-current"),
-            )),
-            success(&pane_response("pane_info", "w1:p7", Some("term-current"))),
-        ]);
+        let runner = RecordingRunner::new([success(&pane_response(
+            "pane_current",
+            "w1:p7",
+            Some("term-current"),
+        ))]);
         let runtime = HerdrRuntime::with_runner(runner, None);
 
         let handle = runtime.current_handle().unwrap();
@@ -265,22 +259,13 @@ mod tests {
         assert_eq!(handle.pane_id, "w1:p7");
         assert_eq!(
             runtime.runner.invocations.into_inner(),
-            vec![
-                Invocation {
-                    program: OsString::from("herdr"),
-                    args: ["pane", "current"]
-                        .into_iter()
-                        .map(OsString::from)
-                        .collect(),
-                },
-                Invocation {
-                    program: OsString::from("herdr"),
-                    args: ["pane", "get", "w1:p7"]
-                        .into_iter()
-                        .map(OsString::from)
-                        .collect(),
-                },
-            ]
+            vec![Invocation {
+                program: OsString::from("herdr"),
+                args: ["pane", "current"]
+                    .into_iter()
+                    .map(OsString::from)
+                    .collect(),
+            }]
         );
     }
 
