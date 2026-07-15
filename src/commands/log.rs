@@ -22,15 +22,36 @@ mod tests {
         let store = TestStore {
             messages: vec![
                 message(1, "claude", "codex", None, "first body"),
-                message(2, "codex", "claude", Some(1), "second\nbody"),
+                message(2, "codex", "claude", None, "second body"),
             ],
+        };
+
+        let output = log(&store).expect("log should succeed");
+
+        let ids = output
+            .lines()
+            .filter_map(|line| line.strip_prefix("id: "))
+            .collect::<Vec<_>>();
+        assert_eq!(ids, ["0001", "0002"]);
+    }
+
+    #[test]
+    fn log_preserves_every_message_field_and_the_complete_body() {
+        let store = TestStore {
+            messages: vec![message(
+                2,
+                "codex",
+                "claude",
+                Some(1),
+                "first line\nsecond line",
+            )],
         };
 
         let output = log(&store).expect("log should succeed");
 
         assert_eq!(
             output,
-            "---\nid: 0001\nfrom: claude\nto: codex\ntype: report\nts: 2026-07-15T10:00:00+09:00\n---\nfirst body\n\n---\nid: 0002\nfrom: codex\nto: claude\ntype: report\nre: 0001\nts: 2026-07-15T10:00:00+09:00\n---\nsecond\nbody"
+            "---\nid: 0002\nfrom: codex\nto: claude\ntype: report\nre: 0001\nts: 2026-07-15T10:00:00+09:00\n---\nfirst line\nsecond line"
         );
     }
 

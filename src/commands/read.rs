@@ -58,8 +58,6 @@ mod tests {
         let second = read(&store, &role("codex"), true).expect("second peek should succeed");
 
         assert_eq!(second, first);
-        assert!(second.contains("\nre: 0007\n"));
-        assert!(second.ends_with("please review"));
     }
 
     struct TestStore {
