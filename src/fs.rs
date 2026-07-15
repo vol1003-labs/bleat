@@ -1,13 +1,129 @@
 use std::fs::{self as std_fs, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread;
+use std::time::Instant;
 use std::time::{Duration, SystemTime};
+
+use nix::errno::Errno;
+use nix::sys::signal::kill;
+use nix::unistd::Pid;
 
 use crate::error::BleatError;
 
 const OLD_TEMP_AGE: Duration = Duration::from_secs(60 * 60);
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug)]
+pub struct SessionLock {
+    lock_dir: PathBuf,
+}
+
+#[derive(Clone, Copy)]
+struct LockPolicy {
+    retry_timeout: Duration,
+    stale_after: Duration,
+    initial_backoff: Duration,
+    maximum_backoff: Duration,
+}
+
+const DEFAULT_LOCK_POLICY: LockPolicy = LockPolicy {
+    retry_timeout: Duration::from_secs(5),
+    stale_after: Duration::from_secs(30),
+    initial_backoff: Duration::from_millis(10),
+    maximum_backoff: Duration::from_millis(100),
+};
+
+impl SessionLock {
+    pub fn acquire(session_dir: &Path) -> Result<Self, BleatError> {
+        Self::acquire_with_policy(session_dir, DEFAULT_LOCK_POLICY)
+    }
+
+    fn acquire_with_policy(session_dir: &Path, policy: LockPolicy) -> Result<Self, BleatError> {
+        let lock_dir = session_dir.join(".lock");
+        let deadline = Instant::now() + policy.retry_timeout;
+        let mut backoff = policy.initial_backoff;
+
+        loop {
+            match std_fs::create_dir(&lock_dir) {
+                Ok(()) => return Self::initialize(lock_dir),
+                Err(source) if source.kind() == io::ErrorKind::AlreadyExists => {
+                    if stale_lock(&lock_dir, policy.stale_after)? {
+                        match std_fs::remove_dir_all(&lock_dir) {
+                            Ok(()) => continue,
+                            Err(source) if source.kind() == io::ErrorKind::NotFound => continue,
+                            Err(source) => {
+                                return Err(io_error("remove stale lock", &lock_dir, source));
+                            }
+                        }
+                    }
+                    if Instant::now() >= deadline {
+                        return Err(BleatError::Runtime(format!(
+                            "timed out acquiring session lock `{}`",
+                            lock_dir.display()
+                        )));
+                    }
+                    thread::sleep(backoff);
+                    backoff = std::cmp::min(backoff * 2, policy.maximum_backoff);
+                }
+                Err(source) => return Err(io_error("create session lock", &lock_dir, source)),
+            }
+        }
+    }
+
+    fn initialize(lock_dir: PathBuf) -> Result<Self, BleatError> {
+        let pid_path = lock_dir.join("pid");
+        let result = File::create(&pid_path).and_then(|mut file| {
+            write!(file, "{}", std::process::id())?;
+            file.sync_all()
+        });
+        if let Err(source) = result {
+            let _ = std_fs::remove_dir_all(&lock_dir);
+            return Err(io_error("record session lock owner", &pid_path, source));
+        }
+        Ok(Self { lock_dir })
+    }
+}
+
+impl Drop for SessionLock {
+    fn drop(&mut self) {
+        let _ = std_fs::remove_dir_all(&self.lock_dir);
+    }
+}
+
+fn stale_lock(lock_dir: &Path, stale_after: Duration) -> Result<bool, BleatError> {
+    match std_fs::read_to_string(lock_dir.join("pid")) {
+        Ok(contents) => match contents.trim().parse::<i32>() {
+            Ok(pid) if pid > 0 => process_is_dead(pid),
+            _ => lock_directory_is_old(lock_dir, stale_after),
+        },
+        Err(source) if source.kind() == io::ErrorKind::NotFound => {
+            lock_directory_is_old(lock_dir, stale_after)
+        }
+        Err(source) => Err(io_error("read session lock owner", lock_dir, source)),
+    }
+}
+
+fn process_is_dead(pid: i32) -> Result<bool, BleatError> {
+    match kill(Pid::from_raw(pid), None) {
+        Ok(()) | Err(Errno::EPERM) => Ok(false),
+        Err(Errno::ESRCH) => Ok(true),
+        Err(source) => Err(BleatError::Runtime(format!(
+            "failed to inspect lock owner pid {pid}: {source}"
+        ))),
+    }
+}
+
+fn lock_directory_is_old(lock_dir: &Path, stale_after: Duration) -> Result<bool, BleatError> {
+    let modified = std_fs::metadata(lock_dir)
+        .and_then(|metadata| metadata.modified())
+        .map_err(|source| io_error("read session lock metadata", lock_dir, source))?;
+    Ok(SystemTime::now()
+        .duration_since(modified)
+        .is_ok_and(|age| age > stale_after))
+}
 
 pub fn atomic_replace(path: &Path, bytes: &[u8]) -> Result<(), BleatError> {
     let parent = path.parent().ok_or_else(|| {
@@ -125,5 +241,83 @@ mod tests {
         assert!(!stale.exists());
         assert!(fresh.exists());
         assert!(message.exists());
+    }
+
+    #[test]
+    fn session_lock_is_released_when_its_guard_is_dropped() {
+        let sandbox = tempdir().expect("sandbox should be created");
+        let policy = test_lock_policy(Duration::from_secs(30));
+
+        let guard = SessionLock::acquire_with_policy(sandbox.path(), policy)
+            .expect("lock should be acquired");
+        assert!(sandbox.path().join(".lock").is_dir());
+
+        drop(guard);
+        assert!(!sandbox.path().join(".lock").exists());
+        SessionLock::acquire_with_policy(sandbox.path(), policy)
+            .expect("released lock should be acquired again");
+    }
+
+    #[test]
+    fn session_lock_does_not_steal_a_lock_from_a_live_process() {
+        let sandbox = tempdir().expect("sandbox should be created");
+        let policy = test_lock_policy(Duration::ZERO);
+        let _guard = SessionLock::acquire_with_policy(sandbox.path(), policy)
+            .expect("first lock should be acquired");
+
+        let error = SessionLock::acquire_with_policy(sandbox.path(), policy)
+            .expect_err("live lock should not be stolen");
+
+        assert!(
+            error
+                .to_string()
+                .contains("timed out acquiring session lock")
+        );
+    }
+
+    #[test]
+    fn session_lock_reclaims_a_lock_owned_by_a_dead_process() {
+        let sandbox = tempdir().expect("sandbox should be created");
+        let lock_dir = sandbox.path().join(".lock");
+        std_fs::create_dir(&lock_dir).expect("stale lock should be created");
+        std_fs::write(lock_dir.join("pid"), i32::MAX.to_string())
+            .expect("dead pid should be recorded");
+
+        let _guard = SessionLock::acquire_with_policy(
+            sandbox.path(),
+            test_lock_policy(Duration::from_secs(30)),
+        )
+        .expect("dead lock should be reclaimed");
+    }
+
+    #[test]
+    fn malformed_pid_requires_the_lock_directory_to_be_old() {
+        let sandbox = tempdir().expect("sandbox should be created");
+        let lock_dir = sandbox.path().join(".lock");
+        std_fs::create_dir(&lock_dir).expect("lock should be created");
+        std_fs::write(lock_dir.join("pid"), "not-a-pid").expect("broken pid should be recorded");
+
+        let fresh_error = SessionLock::acquire_with_policy(
+            sandbox.path(),
+            test_lock_policy(Duration::from_secs(30)),
+        )
+        .expect_err("fresh malformed lock should not be reclaimed");
+        assert!(
+            fresh_error
+                .to_string()
+                .contains("timed out acquiring session lock")
+        );
+
+        SessionLock::acquire_with_policy(sandbox.path(), test_lock_policy(Duration::ZERO))
+            .expect("old malformed lock should be reclaimed");
+    }
+
+    fn test_lock_policy(stale_after: Duration) -> LockPolicy {
+        LockPolicy {
+            retry_timeout: Duration::from_millis(10),
+            stale_after,
+            initial_backoff: Duration::from_millis(1),
+            maximum_backoff: Duration::from_millis(2),
+        }
     }
 }
