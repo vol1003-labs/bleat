@@ -5,5 +5,6 @@ pub mod fs;
 pub mod identity;
 pub mod message;
 pub mod root;
+pub mod runtime;
 pub mod session;
 pub mod store;
