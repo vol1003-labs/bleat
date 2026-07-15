@@ -18,4 +18,7 @@ pub struct Draft {
 pub trait Store {
     fn publish(&self, draft: Draft) -> Result<Message, BleatError>;
     fn all(&self) -> Result<Vec<Message>, BleatError>;
+    fn cursor(&self, role: &Role) -> Result<u64, BleatError>;
+    fn read_unread(&self, role: &Role, peek: bool) -> Result<Vec<Message>, BleatError>;
+    fn unread_count(&self, role: &Role) -> Result<usize, BleatError>;
 }

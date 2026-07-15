@@ -1,9 +1,11 @@
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use crate::error::BleatError;
 use crate::fs::{SessionLock, atomic_replace, cleanup_old_message_temps};
+use crate::identity::Role;
 use crate::message::{Message, decode, encode};
 use crate::store::{Draft, Store};
 
@@ -14,6 +16,27 @@ pub struct FileStore {
 impl FileStore {
     pub fn new(session_dir: PathBuf) -> Self {
         Self { session_dir }
+    }
+
+    fn cursor_path(&self, role: &Role) -> PathBuf {
+        self.session_dir
+            .join("messages")
+            .join(format!(".cursor-{}", role.as_str()))
+    }
+
+    fn unread_after(&self, role: &Role, cursor: u64) -> Result<Vec<Message>, BleatError> {
+        Ok(self
+            .all()?
+            .into_iter()
+            .filter(|message| &message.to == role && message.id > cursor)
+            .collect())
+    }
+
+    fn write_cursor(&self, role: &Role, cursor: u64) -> Result<(), BleatError> {
+        atomic_replace(
+            self.cursor_path(role).as_path(),
+            format!("{cursor}\n").as_bytes(),
+        )
     }
 }
 
@@ -51,6 +74,41 @@ impl Store for FileStore {
         }
         messages.sort_by_key(|message| message.id);
         Ok(messages)
+    }
+
+    fn cursor(&self, role: &Role) -> Result<u64, BleatError> {
+        let path = self.cursor_path(role);
+        match fs::read_to_string(&path) {
+            Ok(value) => value
+                .trim()
+                .parse()
+                .map_err(|_| BleatError::Runtime(format!("invalid cursor `{}`", path.display()))),
+            Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(0),
+            Err(source) => Err(BleatError::Runtime(format!(
+                "failed to read cursor `{}`: {source}",
+                path.display()
+            ))),
+        }
+    }
+
+    fn read_unread(&self, role: &Role, peek: bool) -> Result<Vec<Message>, BleatError> {
+        if peek {
+            let cursor = self.cursor(role)?;
+            return self.unread_after(role, cursor);
+        }
+
+        let _lock = SessionLock::acquire(&self.session_dir)?;
+        let cursor = self.cursor(role)?;
+        let messages = self.unread_after(role, cursor)?;
+        if let Some(delivered) = messages.iter().map(|message| message.id).max() {
+            self.write_cursor(role, cursor.max(delivered))?;
+        }
+        Ok(messages)
+    }
+
+    fn unread_count(&self, role: &Role) -> Result<usize, BleatError> {
+        let cursor = self.cursor(role)?;
+        Ok(self.unread_after(role, cursor)?.len())
     }
 }
 
@@ -256,10 +314,232 @@ mod tests {
         assert!(error.to_string().contains("failed to decode message"));
     }
 
+    #[test]
+    fn read_unread_returns_only_messages_addressed_to_the_role() {
+        let sandbox = tempdir().expect("sandbox should be created");
+        fs::create_dir(sandbox.path().join("messages"))
+            .expect("messages directory should be created");
+        let store = FileStore::new(sandbox.path().to_path_buf());
+        store
+            .publish(draft_to("for claude", "claude"))
+            .expect("claude message should publish");
+        store
+            .publish(draft_to("for codex", "codex"))
+            .expect("codex message should publish");
+
+        let messages = store
+            .read_unread(&Role::parse("claude").expect("role should be valid"), true)
+            .expect("unread messages should load");
+
+        assert_eq!(
+            messages
+                .iter()
+                .map(|message| message.body.as_str())
+                .collect::<Vec<_>>(),
+            vec!["for claude"]
+        );
+    }
+
+    #[test]
+    fn cursor_defaults_to_zero_when_the_role_has_not_read_messages() {
+        let sandbox = tempdir().expect("sandbox should be created");
+        fs::create_dir(sandbox.path().join("messages"))
+            .expect("messages directory should be created");
+        let store = FileStore::new(sandbox.path().to_path_buf());
+        let role = Role::parse("claude").expect("role should be valid");
+
+        let cursor = store.cursor(&role).expect("cursor should load");
+
+        assert_eq!(cursor, 0);
+    }
+
+    #[test]
+    fn cursor_reads_the_roles_saved_position() {
+        let sandbox = tempdir().expect("sandbox should be created");
+        let messages_dir = sandbox.path().join("messages");
+        fs::create_dir(&messages_dir).expect("messages directory should be created");
+        fs::write(messages_dir.join(".cursor-claude"), "7\n").expect("cursor should be written");
+        let store = FileStore::new(sandbox.path().to_path_buf());
+        let role = Role::parse("claude").expect("role should be valid");
+
+        let cursor = store.cursor(&role).expect("cursor should load");
+
+        assert_eq!(cursor, 7);
+    }
+
+    #[test]
+    fn read_unread_returns_only_messages_after_the_cursor() {
+        let sandbox = tempdir().expect("sandbox should be created");
+        let messages_dir = sandbox.path().join("messages");
+        fs::create_dir(&messages_dir).expect("messages directory should be created");
+        let store = FileStore::new(sandbox.path().to_path_buf());
+        store
+            .publish(draft("first"))
+            .expect("first message should publish");
+        store
+            .publish(draft("second"))
+            .expect("second message should publish");
+        fs::write(messages_dir.join(".cursor-claude"), "1\n").expect("cursor should be written");
+        let role = Role::parse("claude").expect("role should be valid");
+
+        let messages = store
+            .read_unread(&role, true)
+            .expect("unread messages should load");
+
+        assert_eq!(
+            messages
+                .iter()
+                .map(|message| message.id)
+                .collect::<Vec<_>>(),
+            vec![2]
+        );
+    }
+
+    #[test]
+    fn peek_does_not_advance_the_cursor() {
+        let sandbox = tempdir().expect("sandbox should be created");
+        fs::create_dir(sandbox.path().join("messages"))
+            .expect("messages directory should be created");
+        let store = FileStore::new(sandbox.path().to_path_buf());
+        store
+            .publish(draft("first"))
+            .expect("message should publish");
+        let role = Role::parse("claude").expect("role should be valid");
+
+        store
+            .read_unread(&role, true)
+            .expect("peek should load messages");
+
+        assert_eq!(store.cursor(&role).expect("cursor should load"), 0);
+    }
+
+    #[test]
+    fn read_advances_the_cursor_to_the_largest_delivered_id() {
+        let sandbox = tempdir().expect("sandbox should be created");
+        fs::create_dir(sandbox.path().join("messages"))
+            .expect("messages directory should be created");
+        let store = FileStore::new(sandbox.path().to_path_buf());
+        store
+            .publish(draft("first"))
+            .expect("first message should publish");
+        store
+            .publish(draft("second"))
+            .expect("second message should publish");
+        let role = Role::parse("claude").expect("role should be valid");
+
+        store
+            .read_unread(&role, false)
+            .expect("read should load messages");
+
+        assert_eq!(store.cursor(&role).expect("cursor should load"), 2);
+    }
+
+    #[test]
+    fn read_does_not_move_the_cursor_backward() {
+        let sandbox = tempdir().expect("sandbox should be created");
+        let messages_dir = sandbox.path().join("messages");
+        fs::create_dir(&messages_dir).expect("messages directory should be created");
+        write_message(&messages_dir, 1, "first");
+        fs::write(messages_dir.join(".cursor-claude"), "7\n").expect("cursor should be written");
+        let store = FileStore::new(sandbox.path().to_path_buf());
+        let role = Role::parse("claude").expect("role should be valid");
+
+        store
+            .read_unread(&role, false)
+            .expect("read should succeed");
+
+        assert_eq!(store.cursor(&role).expect("cursor should load"), 7);
+    }
+
+    #[test]
+    fn cursor_rejects_a_non_numeric_position() {
+        let sandbox = tempdir().expect("sandbox should be created");
+        let messages_dir = sandbox.path().join("messages");
+        fs::create_dir(&messages_dir).expect("messages directory should be created");
+        fs::write(messages_dir.join(".cursor-claude"), "broken\n")
+            .expect("cursor should be written");
+        let store = FileStore::new(sandbox.path().to_path_buf());
+        let role = Role::parse("claude").expect("role should be valid");
+
+        let error = store.cursor(&role).expect_err("broken cursor should fail");
+
+        assert!(matches!(error, BleatError::Runtime(_)));
+        assert!(error.to_string().contains("invalid cursor"));
+    }
+
+    #[test]
+    fn concurrent_read_delivers_each_unread_message_once_per_role() {
+        const READERS: usize = 8;
+
+        let sandbox = tempdir().expect("sandbox should be created");
+        fs::create_dir(sandbox.path().join("messages"))
+            .expect("messages directory should be created");
+        let store = Arc::new(FileStore::new(sandbox.path().to_path_buf()));
+        store
+            .publish(draft("first"))
+            .expect("first message should publish");
+        store
+            .publish(draft("second"))
+            .expect("second message should publish");
+        let barrier = Arc::new(Barrier::new(READERS));
+        let handles = (0..READERS)
+            .map(|_| {
+                let store = Arc::clone(&store);
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    let role = Role::parse("claude").expect("role should be valid");
+                    barrier.wait();
+                    store.read_unread(&role, false)
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let mut delivered_counts = handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .expect("reader should not panic")
+                    .expect("read should succeed")
+                    .len()
+            })
+            .collect::<Vec<_>>();
+        delivered_counts.sort_unstable();
+
+        assert_eq!(delivered_counts, vec![0, 0, 0, 0, 0, 0, 0, 2]);
+    }
+
+    #[test]
+    fn unread_count_reports_the_roles_remaining_messages() {
+        let sandbox = tempdir().expect("sandbox should be created");
+        let messages_dir = sandbox.path().join("messages");
+        fs::create_dir(&messages_dir).expect("messages directory should be created");
+        let store = FileStore::new(sandbox.path().to_path_buf());
+        store
+            .publish(draft("already read"))
+            .expect("first message should publish");
+        store
+            .publish(draft_to("for codex", "codex"))
+            .expect("codex message should publish");
+        store
+            .publish(draft("still unread"))
+            .expect("last message should publish");
+        fs::write(messages_dir.join(".cursor-claude"), "1\n").expect("cursor should be written");
+        let role = Role::parse("claude").expect("role should be valid");
+
+        let count = store.unread_count(&role).expect("unread count should load");
+
+        assert_eq!(count, 1);
+    }
+
     fn draft(body: &str) -> Draft {
+        draft_to(body, "claude")
+    }
+
+    fn draft_to(body: &str, to: &str) -> Draft {
         Draft {
             from: Role::parse("codex").expect("from role should be valid"),
-            to: Role::parse("claude").expect("to role should be valid"),
+            to: Role::parse(to).expect("to role should be valid"),
             kind: MessageType::parse("report").expect("message type should be valid"),
             reply_to: None,
             timestamp: DateTime::parse_from_rfc3339("2026-07-15T10:00:00+09:00")
