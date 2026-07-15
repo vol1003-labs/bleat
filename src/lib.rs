@@ -5,3 +5,4 @@ pub mod identity;
 pub mod message;
 pub mod root;
 pub mod session;
+pub mod store;
