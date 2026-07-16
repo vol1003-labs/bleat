@@ -24,12 +24,6 @@ borrows the email model:
 
 ## Install
 
-From crates.io:
-
-```sh
-cargo install bleat
-```
-
 With Nix:
 
 ```sh
