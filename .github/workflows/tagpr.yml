@@ -1,0 +1,23 @@
+name: tagpr
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: read
+
+jobs:
+  tagpr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          token: ${{ secrets.GH_PAT }}
+          persist-credentials: false
+      - uses: Songmu/tagpr@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
