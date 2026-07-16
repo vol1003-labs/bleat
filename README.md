@@ -24,6 +24,20 @@ borrows the email model:
 
 ## Install
 
+From crates.io:
+
+```sh
+cargo install bleat
+```
+
+With Nix:
+
+```sh
+nix run github:vol1003-labs/bleat -- --help
+```
+
+From a source checkout:
+
 ```sh
 cargo install --path .
 ```
@@ -131,7 +145,7 @@ consumes the same file.
 **Claude Code** — this repo is a plugin marketplace:
 
 ```
-/plugin marketplace add vol1003-labs/agent-messaging-cli
+/plugin marketplace add vol1003-labs/bleat
 /plugin install bleat
 ```
 

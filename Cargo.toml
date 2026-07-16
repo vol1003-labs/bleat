@@ -3,6 +3,13 @@ name = "bleat"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
+license = "MIT"
+description = "Mail-style messaging CLI for coordinating coding agents"
+repository = "https://github.com/vol1003-labs/bleat"
+readme = "README.md"
+keywords = ["cli", "agents", "messaging", "mail", "coordination"]
+categories = ["command-line-utilities", "development-tools"]
+include = ["Cargo.toml", "Cargo.lock", "LICENSE", "README.md", "src/**", "tests/**"]
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
@@ -15,3 +22,7 @@ thiserror = "2"
 [dev-dependencies]
 assert_cmd = "2"
 tempfile = "3"
+
+[profile.dist]
+inherits = "release"
+lto = "thin"
