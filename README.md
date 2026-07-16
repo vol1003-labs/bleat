@@ -101,7 +101,7 @@ Last activity: 2026-07-16T08:34:10+00:00 reviewer -> driver
 | `bleat init <slug> --as <role>` | Create a session and register your role |
 | `bleat join --as <role>` | Register your role in an existing session |
 | `bleat send --to <role> [--type T] [--re N] [BODY \| --file F \| stdin]` | Publish a message (default type: `report`) |
-| `bleat read [--peek] [--wait [--timeout N]]` | Show unread messages addressed to you; marks them read unless `--peek` |
+| `bleat read [--peek] [--wait [--timeout N]]` | Show unread messages addressed to you; marks them read unless `--peek` (`--wait --timeout` defaults to 300 s) |
 | `bleat status` | Roles, unread counts, total messages, last activity |
 | `bleat log` | Full chronological log (audit) |
 
@@ -117,7 +117,7 @@ Exit codes:
 |---|---|
 | 0 | success (including "no unread"; for `--wait`: new message arrived) |
 | 1 | runtime error |
-| 2 | usage error (e.g. `--peek --wait` together, `--timeout 0`) |
+| 2 | usage error (e.g. `--peek --wait` together, `--timeout 0`, sending to an unregistered role) |
 | 3 | `read --wait` timed out with no new messages |
 
 ## Agent integration (Claude Code)

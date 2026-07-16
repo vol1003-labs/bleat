@@ -30,13 +30,15 @@ description: Use when coordinating with other coding agents through a bleat sess
 
 Message types are free-form; starter vocabulary: `kick`, `question`, `answer`, `report`.
 
+`send` fails with a usage error if the recipient role has not joined the session yet — make sure the recipient has run `init` or `join` first.
+
 Exit codes:
 
 | code | meaning |
 |---|---|
 | 0 | success (including "no unread"; for `--wait`: new message arrived) |
 | 1 | runtime error |
-| 2 | usage error (e.g. `--peek --wait` together, `--timeout 0`) |
+| 2 | usage error (e.g. `--peek --wait` together, `--timeout 0`, sending to an unregistered role) |
 | 3 | `read --wait` timed out with no new messages |
 
 ## Etiquette
