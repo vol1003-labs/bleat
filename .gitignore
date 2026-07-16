@@ -1,4 +1,10 @@
+# git
+/.worktrees
+
+# Rust
 /result
 /target
-.worktrees/
 
+# direnv
+/.direnv
+.envrc
