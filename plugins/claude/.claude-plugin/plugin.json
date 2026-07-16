@@ -1,0 +1,5 @@
+{
+  "name": "bleat",
+  "description": "Teaches agents to exchange durable, mail-style messages with other coding agents via the bleat CLI.",
+  "version": "0.1.0"
+}
