@@ -42,7 +42,7 @@
 
             meta = {
               description = "Mail-style messaging CLI for coordinating coding agents";
-              homepage = "https://github.com/vol1003-labs/agent-messaging-cli";
+              homepage = "https://github.com/vol1003-labs/bleat";
               license = pkgs.lib.licenses.mit;
               mainProgram = "bleat";
             };

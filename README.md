@@ -33,7 +33,7 @@ cargo install bleat
 With Nix:
 
 ```sh
-nix run github:vol1003-labs/agent-messaging-cli -- --help
+nix run github:vol1003-labs/bleat -- --help
 ```
 
 From a source checkout:
@@ -145,7 +145,7 @@ consumes the same file.
 **Claude Code** — this repo is a plugin marketplace:
 
 ```
-/plugin marketplace add vol1003-labs/agent-messaging-cli
+/plugin marketplace add vol1003-labs/bleat
 /plugin install bleat
 ```
 
