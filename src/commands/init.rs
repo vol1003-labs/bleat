@@ -32,14 +32,24 @@ mod tests {
     use crate::runtime::{Runtime, RuntimeHandle};
     use crate::session::load_session;
 
+    #[derive(Clone, serde::Deserialize, serde::Serialize)]
+    struct FakeHandle {
+        channel: String,
+        token: u64,
+    }
+
+    impl RuntimeHandle for FakeHandle {}
+
     struct FakeRuntime {
-        result: Result<RuntimeHandle, String>,
+        result: Result<FakeHandle, String>,
         bleat_root: std::path::PathBuf,
         current_handle_calls: Cell<usize>,
     }
 
     impl Runtime for FakeRuntime {
-        fn current_handle(&self) -> Result<RuntimeHandle, BleatError> {
+        type Handle = FakeHandle;
+
+        fn current_handle(&self) -> Result<Self::Handle, BleatError> {
             self.current_handle_calls
                 .set(self.current_handle_calls.get() + 1);
             assert!(!self.bleat_root.exists());
@@ -55,17 +65,17 @@ mod tests {
             _role: &Role,
             _cwd: &Path,
             _argv: &[OsString],
-        ) -> Result<RuntimeHandle, BleatError> {
+        ) -> Result<Self::Handle, BleatError> {
             unreachable!("init must not spawn a pane")
         }
 
-        fn alive(&self, _handle: &RuntimeHandle) -> Result<bool, BleatError> {
+        fn alive(&self, _handle: &Self::Handle) -> Result<bool, BleatError> {
             unreachable!("init must not inspect pane liveness")
         }
 
         fn nudge(
             &self,
-            _handle: &RuntimeHandle,
+            _handle: &Self::Handle,
             _slug: &Slug,
             _role: &Role,
         ) -> Result<(), BleatError> {
@@ -78,10 +88,9 @@ mod tests {
         let sandbox = tempdir().expect("sandbox should be created");
         let runtime = runtime(
             sandbox.path(),
-            Ok(RuntimeHandle {
-                terminal_id: "term-1".to_owned(),
-                pane_id: "pane-1".to_owned(),
-                agent_name: None,
+            Ok(FakeHandle {
+                channel: "current".to_owned(),
+                token: 1,
             }),
         );
 
@@ -99,8 +108,10 @@ mod tests {
             session.roles[&claude].registered,
             timestamp("2026-07-16T10:00:00+09:00")
         );
-        assert_eq!(session.runtime_handles[&claude]["terminal_id"], "term-1");
-        assert_eq!(session.runtime_handles[&claude]["pane_id"], "pane-1");
+        assert_eq!(
+            session.runtime_handles[&claude],
+            serde_json::json!({ "channel": "current", "token": 1 })
+        );
         assert_eq!(runtime.current_handle_calls.get(), 1);
     }
 
@@ -121,7 +132,7 @@ mod tests {
         assert!(!sandbox.path().join(".bleat").exists());
     }
 
-    fn runtime(root: &Path, result: Result<RuntimeHandle, String>) -> FakeRuntime {
+    fn runtime(root: &Path, result: Result<FakeHandle, String>) -> FakeRuntime {
         FakeRuntime {
             result,
             bleat_root: root.join(".bleat"),

@@ -83,14 +83,14 @@ pub fn create_session(
     create_session_with_runtime_handle(root, slug, role, created, None)
 }
 
-pub(crate) fn create_session_with_handle(
+pub(crate) fn create_session_with_handle<H: RuntimeHandle>(
     root: &Path,
     slug: Slug,
     role: Role,
     created: DateTime<FixedOffset>,
-    handle: RuntimeHandle,
+    handle: H,
 ) -> Result<SessionPath, BleatError> {
-    create_session_with_runtime_handle(root, slug, role, created, Some(handle))
+    create_session_with_runtime_handle(root, slug, role, created, Some(handle.into_value()?))
 }
 
 fn create_session_with_runtime_handle(
@@ -98,7 +98,7 @@ fn create_session_with_runtime_handle(
     slug: Slug,
     role: Role,
     created: DateTime<FixedOffset>,
-    handle: Option<RuntimeHandle>,
+    handle: Option<Value>,
 ) -> Result<SessionPath, BleatError> {
     let bleat_root = root.join(".bleat");
     fs::create_dir_all(&bleat_root)
@@ -134,13 +134,13 @@ fn initialize_session(
     slug: Slug,
     role: Role,
     created: DateTime<FixedOffset>,
-    handle: Option<RuntimeHandle>,
+    handle: Option<Value>,
 ) -> Result<(), BleatError> {
     fs::create_dir(path.messages_dir()).map_err(|source| {
         session_io_error("create messages directory", &path.messages_dir(), source)
     })?;
     let runtime_handles = handle
-        .map(|handle| BTreeMap::from([(role.clone(), runtime_handle_value(handle))]))
+        .map(|handle| BTreeMap::from([(role.clone(), handle)]))
         .unwrap_or_default();
     let mut roles = BTreeMap::new();
     roles.insert(
@@ -163,22 +163,6 @@ fn initialize_session(
         extra: BTreeMap::new(),
     };
     atomic_replace(&path.session_json(), &encode_session(&session)?)
-}
-
-pub(crate) fn runtime_handle_value(handle: RuntimeHandle) -> Value {
-    let RuntimeHandle {
-        terminal_id,
-        pane_id,
-        agent_name,
-    } = handle;
-    let mut value = serde_json::Map::from_iter([
-        ("terminal_id".to_owned(), Value::String(terminal_id)),
-        ("pane_id".to_owned(), Value::String(pane_id)),
-    ]);
-    if let Some(agent_name) = agent_name {
-        value.insert("agent_name".to_owned(), Value::String(agent_name));
-    }
-    Value::Object(value)
 }
 
 pub fn resolve_session(
@@ -343,6 +327,48 @@ mod tests {
       "future_top_field": { "enabled": true }
     }
     "#;
+
+    #[derive(Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+    struct TestHandle {
+        socket: String,
+        process: u64,
+    }
+
+    impl crate::runtime::RuntimeHandle for TestHandle {}
+
+    #[test]
+    fn create_session_persists_an_opaque_runtime_handle() {
+        let sandbox = tempdir().expect("sandbox should be created");
+        let role = Role::parse("worker").expect("role should be valid");
+
+        let path = create_session_with_handle(
+            sandbox.path(),
+            Slug::parse("feature").expect("slug should be valid"),
+            role.clone(),
+            DateTime::parse_from_rfc3339("2026-07-16T10:00:00+09:00")
+                .expect("timestamp should be valid"),
+            TestHandle {
+                socket: "runtime.sock".to_owned(),
+                process: 42,
+            },
+        )
+        .expect("session should be created");
+
+        let session = load_session(&path.session_json()).expect("session should load");
+        assert_eq!(
+            session.runtime_handles[&role],
+            serde_json::json!({ "socket": "runtime.sock", "process": 42 })
+        );
+        let restored = TestHandle::from_value(session.runtime_handles[&role].clone())
+            .expect("handle should restore");
+        assert_eq!(
+            restored,
+            TestHandle {
+                socket: "runtime.sock".to_owned(),
+                process: 42,
+            }
+        );
+    }
 
     #[test]
     fn session_round_trip_preserves_known_and_unknown_fields() {

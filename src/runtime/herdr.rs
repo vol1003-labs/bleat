@@ -4,7 +4,7 @@ use std::io;
 use std::path::Path;
 use std::process::{Command, Output};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::{Runtime, RuntimeHandle};
 use crate::error::BleatError;
@@ -106,8 +106,20 @@ fn pane_by_id<R: ProcessRunner>(
     )
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct HerdrHandle {
+    terminal_id: String,
+    pane_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent_name: Option<String>,
+}
+
+impl RuntimeHandle for HerdrHandle {}
+
 impl<R: ProcessRunner> Runtime for HerdrRuntime<R> {
-    fn current_handle(&self) -> Result<RuntimeHandle, BleatError> {
+    type Handle = HerdrHandle;
+
+    fn current_handle(&self) -> Result<Self::Handle, BleatError> {
         let pane = match self.env_pane_id.as_deref() {
             Some(pane_id) => pane_by_id(self, pane_id)?,
             None => pane(
@@ -116,7 +128,7 @@ impl<R: ProcessRunner> Runtime for HerdrRuntime<R> {
             )?,
         };
 
-        Ok(RuntimeHandle {
+        Ok(HerdrHandle {
             terminal_id: pane.terminal_id,
             pane_id: pane.pane_id,
             agent_name: None,
@@ -129,17 +141,17 @@ impl<R: ProcessRunner> Runtime for HerdrRuntime<R> {
         _role: &Role,
         _cwd: &Path,
         _argv: &[OsString],
-    ) -> Result<RuntimeHandle, BleatError> {
+    ) -> Result<Self::Handle, BleatError> {
         Err(BleatError::Runtime("herdr spawn is not implemented".into()))
     }
 
-    fn alive(&self, _handle: &RuntimeHandle) -> Result<bool, BleatError> {
+    fn alive(&self, _handle: &Self::Handle) -> Result<bool, BleatError> {
         Err(BleatError::Runtime(
             "herdr alive check is not implemented".into(),
         ))
     }
 
-    fn nudge(&self, _handle: &RuntimeHandle, _slug: &Slug, _role: &Role) -> Result<(), BleatError> {
+    fn nudge(&self, _handle: &Self::Handle, _slug: &Slug, _role: &Role) -> Result<(), BleatError> {
         Err(BleatError::Runtime("herdr nudge is not implemented".into()))
     }
 }
@@ -229,9 +241,13 @@ mod tests {
 
         let handle = runtime.current_handle().unwrap();
 
-        assert_eq!(handle.terminal_id, "term-env");
-        assert_eq!(handle.pane_id, env_pane_id);
-        assert_eq!(handle.agent_name, None);
+        assert_eq!(
+            serde_json::to_value(&handle).expect("handle should serialize"),
+            serde_json::json!({
+                "terminal_id": "term-env",
+                "pane_id": env_pane_id
+            })
+        );
         assert_eq!(
             runtime.runner.invocations.into_inner(),
             vec![Invocation {
@@ -255,8 +271,13 @@ mod tests {
 
         let handle = runtime.current_handle().unwrap();
 
-        assert_eq!(handle.terminal_id, "term-current");
-        assert_eq!(handle.pane_id, "w1:p7");
+        assert_eq!(
+            serde_json::to_value(&handle).expect("handle should serialize"),
+            serde_json::json!({
+                "terminal_id": "term-current",
+                "pane_id": "w1:p7"
+            })
+        );
         assert_eq!(
             runtime.runner.invocations.into_inner(),
             vec![Invocation {

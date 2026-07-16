@@ -3,8 +3,8 @@ use chrono::{DateTime, FixedOffset};
 use crate::error::BleatError;
 use crate::fs::{SessionLock, atomic_replace};
 use crate::identity::Role;
-use crate::runtime::Runtime;
-use crate::session::{RoleRecord, SessionPath, encode_session, load_session, runtime_handle_value};
+use crate::runtime::{Runtime, RuntimeHandle};
+use crate::session::{RoleRecord, SessionPath, encode_session, load_session};
 
 pub fn join(
     session_path: &SessionPath,
@@ -18,7 +18,7 @@ pub fn join(
             session_path.slug().as_str()
         )));
     }
-    let handle = runtime.current_handle()?;
+    let handle = runtime.current_handle()?.into_value()?;
     let _lock = SessionLock::acquire(&session_path.directory())?;
     let mut session = load_session(&session_path.session_json())?;
 
@@ -31,9 +31,7 @@ pub fn join(
             cmd: None,
             extra: Default::default(),
         });
-    session
-        .runtime_handles
-        .insert(role, runtime_handle_value(handle));
+    session.runtime_handles.insert(role, handle);
     atomic_replace(&session_path.session_json(), &encode_session(&session)?)
 }
 
@@ -54,14 +52,22 @@ mod tests {
     use crate::runtime::{Runtime, RuntimeHandle};
     use crate::session::{SessionPath, create_session, load_session};
 
+    #[derive(Clone, serde::Deserialize, serde::Serialize)]
+    struct FakeHandle {
+        channel: String,
+        token: u64,
+    }
+
+    impl RuntimeHandle for FakeHandle {}
+
     struct FakeRuntime {
-        result: Result<RuntimeHandle, String>,
+        result: Result<FakeHandle, String>,
         session_dir: Option<std::path::PathBuf>,
         current_handle_calls: Cell<usize>,
     }
 
     impl FakeRuntime {
-        fn returning(handle: RuntimeHandle) -> Self {
+        fn returning(handle: FakeHandle) -> Self {
             Self {
                 result: Ok(handle),
                 session_dir: None,
@@ -84,7 +90,9 @@ mod tests {
     }
 
     impl Runtime for FakeRuntime {
-        fn current_handle(&self) -> Result<RuntimeHandle, BleatError> {
+        type Handle = FakeHandle;
+
+        fn current_handle(&self) -> Result<Self::Handle, BleatError> {
             self.current_handle_calls
                 .set(self.current_handle_calls.get() + 1);
             if let Some(session_dir) = &self.session_dir {
@@ -102,17 +110,17 @@ mod tests {
             _role: &Role,
             _cwd: &Path,
             _argv: &[OsString],
-        ) -> Result<RuntimeHandle, BleatError> {
+        ) -> Result<Self::Handle, BleatError> {
             unreachable!("join must not spawn a pane")
         }
 
-        fn alive(&self, _handle: &RuntimeHandle) -> Result<bool, BleatError> {
+        fn alive(&self, _handle: &Self::Handle) -> Result<bool, BleatError> {
             unreachable!("join must not inspect pane liveness")
         }
 
         fn nudge(
             &self,
-            _handle: &RuntimeHandle,
+            _handle: &Self::Handle,
             _slug: &Slug,
             _role: &Role,
         ) -> Result<(), BleatError> {
@@ -124,7 +132,7 @@ mod tests {
     fn join_registers_a_new_role_and_its_current_runtime_handle() {
         let sandbox = tempdir().expect("sandbox should be created");
         let path = session(sandbox.path());
-        let runtime = FakeRuntime::returning(handle("term-codex", "pane-codex", Some("codex")));
+        let runtime = FakeRuntime::returning(handle("current", 1));
 
         join(
             &path,
@@ -139,9 +147,8 @@ mod tests {
         assert_eq!(
             persisted.runtime_handles[&role("codex")],
             serde_json::json!({
-                "terminal_id": "term-codex",
-                "pane_id": "pane-codex",
-                "agent_name": "codex"
+                "channel": "current",
+                "token": 1
             })
         );
     }
@@ -164,7 +171,7 @@ mod tests {
             crate::session::encode_session(&existing).expect("session should encode"),
         )
         .expect("fixture should be written");
-        let runtime = FakeRuntime::returning(handle("term-new", "pane-new", None));
+        let runtime = FakeRuntime::returning(handle("replacement", 2));
 
         join(
             &path,
@@ -180,8 +187,8 @@ mod tests {
         assert_eq!(
             persisted.runtime_handles[&role("claude")],
             serde_json::json!({
-                "terminal_id": "term-new",
-                "pane_id": "pane-new"
+                "channel": "replacement",
+                "token": 2
             })
         );
     }
@@ -196,7 +203,7 @@ mod tests {
             &path,
             role("claude"),
             registered,
-            &FakeRuntime::returning(handle("term-new", "pane-new", None)),
+            &FakeRuntime::returning(handle("current", 1)),
         )
         .expect("role should rejoin");
 
@@ -215,7 +222,7 @@ mod tests {
             &path,
             role("claude"),
             timestamp("2026-07-16T10:00:00+09:00"),
-            &FakeRuntime::returning(handle("term-new", "pane-new", None)),
+            &FakeRuntime::returning(handle("current", 1)),
         )
         .expect("role should rejoin");
 
@@ -292,8 +299,7 @@ mod tests {
     fn join_gets_the_current_handle_before_acquiring_the_session_lock() {
         let sandbox = tempdir().expect("sandbox should be created");
         let path = session(sandbox.path());
-        let runtime =
-            FakeRuntime::returning(handle("term-new", "pane-new", None)).observing_lock(&path);
+        let runtime = FakeRuntime::returning(handle("current", 1)).observing_lock(&path);
 
         join(
             &path,
@@ -324,11 +330,10 @@ mod tests {
         DateTime::parse_from_rfc3339(value).expect("timestamp should be valid")
     }
 
-    fn handle(terminal_id: &str, pane_id: &str, agent_name: Option<&str>) -> RuntimeHandle {
-        RuntimeHandle {
-            terminal_id: terminal_id.to_owned(),
-            pane_id: pane_id.to_owned(),
-            agent_name: agent_name.map(str::to_owned),
+    fn handle(channel: &str, token: u64) -> FakeHandle {
+        FakeHandle {
+            channel: channel.to_owned(),
+            token,
         }
     }
 
