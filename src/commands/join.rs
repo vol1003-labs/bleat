@@ -40,7 +40,7 @@ mod tests {
     use std::cell::Cell;
     use std::ffi::OsString;
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use chrono::{DateTime, FixedOffset};
     use serde_json::Value;
@@ -59,6 +59,62 @@ mod tests {
     }
 
     impl RuntimeHandle for FakeHandle {}
+
+    #[derive(Clone, serde::Deserialize)]
+    struct SerializationFailingHandle {
+        lock_path: PathBuf,
+    }
+
+    impl serde::Serialize for SerializationFailingHandle {
+        fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            assert!(!self.lock_path.exists());
+            Err(<S::Error as serde::ser::Error>::custom(
+                "runtime handle serialization failed",
+            ))
+        }
+    }
+
+    impl RuntimeHandle for SerializationFailingHandle {}
+
+    struct SerializationFailingRuntime {
+        lock_path: PathBuf,
+    }
+
+    impl Runtime for SerializationFailingRuntime {
+        type Handle = SerializationFailingHandle;
+
+        fn current_handle(&self) -> Result<Self::Handle, BleatError> {
+            Ok(SerializationFailingHandle {
+                lock_path: self.lock_path.clone(),
+            })
+        }
+
+        fn spawn(
+            &self,
+            _slug: &Slug,
+            _role: &Role,
+            _cwd: &Path,
+            _argv: &[OsString],
+        ) -> Result<Self::Handle, BleatError> {
+            unreachable!("join must not spawn a pane")
+        }
+
+        fn alive(&self, _handle: &Self::Handle) -> Result<bool, BleatError> {
+            unreachable!("join must not inspect pane liveness")
+        }
+
+        fn nudge(
+            &self,
+            _handle: &Self::Handle,
+            _slug: &Slug,
+            _role: &Role,
+        ) -> Result<(), BleatError> {
+            unreachable!("join must not nudge a pane")
+        }
+    }
 
     struct FakeRuntime {
         result: Result<FakeHandle, String>,
@@ -291,6 +347,33 @@ mod tests {
         assert!(matches!(error, BleatError::Runtime(_)));
         assert_eq!(
             fs::read(path.session_json()).expect("session should remain"),
+            before
+        );
+    }
+
+    #[test]
+    fn serialization_failure_precedes_locking_and_leaves_the_session_unchanged() {
+        let sandbox = tempdir().expect("sandbox should be created");
+        let path = session(sandbox.path());
+        let before = fs::read(path.session_json()).expect("session should be readable");
+        let lock_path = path.directory().join(".lock");
+
+        let error = join(
+            &path,
+            role("codex"),
+            timestamp("2026-07-16T10:00:00+09:00"),
+            &SerializationFailingRuntime {
+                lock_path: lock_path.clone(),
+            },
+        )
+        .expect_err("serialization failure should fail join");
+
+        assert!(
+            matches!(error, BleatError::Runtime(message) if message.contains("encode runtime handle") && message.contains("runtime handle serialization failed"))
+        );
+        assert!(!lock_path.exists());
+        assert_eq!(
+            fs::read(path.session_json()).expect("session should remain readable"),
             before
         );
     }

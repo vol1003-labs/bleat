@@ -336,6 +336,25 @@ mod tests {
 
     impl crate::runtime::RuntimeHandle for TestHandle {}
 
+    #[derive(serde::Deserialize)]
+    struct SerializationFailingHandle {
+        bleat_root: PathBuf,
+    }
+
+    impl serde::Serialize for SerializationFailingHandle {
+        fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            assert!(!self.bleat_root.exists());
+            Err(<S::Error as serde::ser::Error>::custom(
+                "runtime handle serialization failed",
+            ))
+        }
+    }
+
+    impl crate::runtime::RuntimeHandle for SerializationFailingHandle {}
+
     #[test]
     fn create_session_persists_an_opaque_runtime_handle() {
         let sandbox = tempdir().expect("sandbox should be created");
@@ -368,6 +387,29 @@ mod tests {
                 process: 42,
             }
         );
+    }
+
+    #[test]
+    fn runtime_handle_serialization_failure_does_not_create_an_incomplete_session() {
+        let sandbox = tempdir().expect("sandbox should be created");
+        let bleat_root = sandbox.path().join(".bleat");
+
+        let error = create_session_with_handle(
+            sandbox.path(),
+            Slug::parse("feature").expect("slug should be valid"),
+            Role::parse("worker").expect("role should be valid"),
+            DateTime::parse_from_rfc3339("2026-07-16T10:00:00+09:00")
+                .expect("timestamp should be valid"),
+            SerializationFailingHandle {
+                bleat_root: bleat_root.clone(),
+            },
+        )
+        .expect_err("serialization failure should fail session creation");
+
+        assert!(
+            matches!(error, BleatError::Runtime(message) if message.contains("encode runtime handle") && message.contains("runtime handle serialization failed"))
+        );
+        assert!(!bleat_root.exists());
     }
 
     #[test]
