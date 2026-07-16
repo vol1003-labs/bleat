@@ -10,7 +10,6 @@ use serde_json::Value;
 use crate::error::BleatError;
 use crate::fs::atomic_replace;
 use crate::identity::{Role, Slug};
-use crate::runtime::RuntimeHandle;
 
 pub const SESSION_VERSION: u32 = 1;
 
@@ -20,9 +19,7 @@ pub struct Session {
     pub slug: Slug,
     pub created: DateTime<FixedOffset>,
     pub store: String,
-    pub runtime: String,
     pub roles: BTreeMap<Role, RoleRecord>,
-    pub runtime_handles: BTreeMap<Role, Value>,
     pub artifacts: Value,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
@@ -31,8 +28,6 @@ pub struct Session {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RoleRecord {
     pub registered: DateTime<FixedOffset>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cmd: Option<Vec<String>>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
@@ -80,26 +75,6 @@ pub fn create_session(
     role: Role,
     created: DateTime<FixedOffset>,
 ) -> Result<SessionPath, BleatError> {
-    create_session_with_runtime_handle(root, slug, role, created, None)
-}
-
-pub(crate) fn create_session_with_handle<H: RuntimeHandle>(
-    root: &Path,
-    slug: Slug,
-    role: Role,
-    created: DateTime<FixedOffset>,
-    handle: H,
-) -> Result<SessionPath, BleatError> {
-    create_session_with_runtime_handle(root, slug, role, created, Some(handle.into_value()?))
-}
-
-fn create_session_with_runtime_handle(
-    root: &Path,
-    slug: Slug,
-    role: Role,
-    created: DateTime<FixedOffset>,
-    handle: Option<Value>,
-) -> Result<SessionPath, BleatError> {
     let bleat_root = root.join(".bleat");
     fs::create_dir_all(&bleat_root)
         .map_err(|source| session_io_error("create bleat directory", &bleat_root, source))?;
@@ -122,7 +97,7 @@ fn create_session_with_runtime_handle(
         }
     }
 
-    let result = initialize_session(&path, slug, role, created, handle);
+    let result = initialize_session(&path, slug, role, created);
     if result.is_err() {
         let _ = fs::remove_dir_all(&session_dir);
     }
@@ -134,20 +109,15 @@ fn initialize_session(
     slug: Slug,
     role: Role,
     created: DateTime<FixedOffset>,
-    handle: Option<Value>,
 ) -> Result<(), BleatError> {
     fs::create_dir(path.messages_dir()).map_err(|source| {
         session_io_error("create messages directory", &path.messages_dir(), source)
     })?;
-    let runtime_handles = handle
-        .map(|handle| BTreeMap::from([(role.clone(), handle)]))
-        .unwrap_or_default();
     let mut roles = BTreeMap::new();
     roles.insert(
         role,
         RoleRecord {
             registered: created,
-            cmd: None,
             extra: BTreeMap::new(),
         },
     );
@@ -156,9 +126,7 @@ fn initialize_session(
         slug,
         created,
         store: "file".to_owned(),
-        runtime: "herdr".to_owned(),
         roles,
-        runtime_handles,
         artifacts: serde_json::json!({}),
         extra: BTreeMap::new(),
     };
@@ -309,108 +277,19 @@ mod tests {
       "slug": "2026-07-13-feature",
       "created": "2026-07-13T10:00:00+09:00",
       "store": "file",
-      "runtime": "herdr",
       "roles": {
         "claude": {
           "registered": "2026-07-13T10:00:00+09:00",
           "future_role_field": { "enabled": true }
         },
         "codex": {
-          "registered": "2026-07-13T10:01:00+09:00",
-          "cmd": ["codex", "--model", "gpt"]
+          "registered": "2026-07-13T10:01:00+09:00"
         }
-      },
-      "runtime_handles": {
-        "claude": { "terminal_id": "term_1", "future_handle": 7 }
       },
       "artifacts": { "spec": ".superpowers/specs/feature.md" },
       "future_top_field": { "enabled": true }
     }
     "#;
-
-    #[derive(Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
-    struct TestHandle {
-        socket: String,
-        process: u64,
-    }
-
-    impl crate::runtime::RuntimeHandle for TestHandle {}
-
-    #[derive(serde::Deserialize)]
-    struct SerializationFailingHandle {
-        bleat_root: PathBuf,
-    }
-
-    impl serde::Serialize for SerializationFailingHandle {
-        fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: serde::Serializer,
-        {
-            assert!(!self.bleat_root.exists());
-            Err(<S::Error as serde::ser::Error>::custom(
-                "runtime handle serialization failed",
-            ))
-        }
-    }
-
-    impl crate::runtime::RuntimeHandle for SerializationFailingHandle {}
-
-    #[test]
-    fn create_session_persists_an_opaque_runtime_handle() {
-        let sandbox = tempdir().expect("sandbox should be created");
-        let role = Role::parse("worker").expect("role should be valid");
-
-        let path = create_session_with_handle(
-            sandbox.path(),
-            Slug::parse("feature").expect("slug should be valid"),
-            role.clone(),
-            DateTime::parse_from_rfc3339("2026-07-16T10:00:00+09:00")
-                .expect("timestamp should be valid"),
-            TestHandle {
-                socket: "runtime.sock".to_owned(),
-                process: 42,
-            },
-        )
-        .expect("session should be created");
-
-        let session = load_session(&path.session_json()).expect("session should load");
-        assert_eq!(
-            session.runtime_handles[&role],
-            serde_json::json!({ "socket": "runtime.sock", "process": 42 })
-        );
-        let restored = TestHandle::from_value(session.runtime_handles[&role].clone())
-            .expect("handle should restore");
-        assert_eq!(
-            restored,
-            TestHandle {
-                socket: "runtime.sock".to_owned(),
-                process: 42,
-            }
-        );
-    }
-
-    #[test]
-    fn runtime_handle_serialization_failure_does_not_create_an_incomplete_session() {
-        let sandbox = tempdir().expect("sandbox should be created");
-        let bleat_root = sandbox.path().join(".bleat");
-
-        let error = create_session_with_handle(
-            sandbox.path(),
-            Slug::parse("feature").expect("slug should be valid"),
-            Role::parse("worker").expect("role should be valid"),
-            DateTime::parse_from_rfc3339("2026-07-16T10:00:00+09:00")
-                .expect("timestamp should be valid"),
-            SerializationFailingHandle {
-                bleat_root: bleat_root.clone(),
-            },
-        )
-        .expect_err("serialization failure should fail session creation");
-
-        assert!(
-            matches!(error, BleatError::Runtime(message) if message.contains("encode runtime handle") && message.contains("runtime handle serialization failed"))
-        );
-        assert!(!bleat_root.exists());
-    }
 
     #[test]
     fn session_round_trip_preserves_known_and_unknown_fields() {
@@ -427,7 +306,6 @@ mod tests {
             value["roles"]["claude"]["future_role_field"]["enabled"],
             true
         );
-        assert_eq!(value["runtime_handles"]["claude"]["future_handle"], 7);
         assert_eq!(value["artifacts"]["spec"], ".superpowers/specs/feature.md");
     }
 
@@ -481,6 +359,33 @@ mod tests {
         assert_eq!(session.slug.as_str(), "feature");
         assert!(session.roles.keys().any(|role| role.as_str() == "claude"));
         assert!(path.messages_dir().is_dir());
+    }
+
+    #[test]
+    fn create_session_writes_the_version_one_schema() {
+        let sandbox = tempdir().expect("sandbox should be created");
+        let path = create_test_session(sandbox.path(), "feature", "2026-07-16T10:00:00+09:00");
+
+        let value: Value = serde_json::from_slice(
+            &fs::read(path.session_json()).expect("session should be readable"),
+        )
+        .expect("session should decode");
+
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "version": 1,
+                "slug": "feature",
+                "created": "2026-07-16T10:00:00+09:00",
+                "store": "file",
+                "roles": {
+                    "claude": {
+                        "registered": "2026-07-16T10:00:00+09:00"
+                    }
+                },
+                "artifacts": {}
+            })
+        );
     }
 
     #[test]

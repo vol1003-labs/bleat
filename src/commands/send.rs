@@ -377,7 +377,6 @@ mod tests {
                     role(name),
                     RoleRecord {
                         registered: created,
-                        cmd: None,
                         extra: BTreeMap::new(),
                     },
                 )
@@ -388,9 +387,7 @@ mod tests {
             slug: crate::identity::Slug::parse("session").expect("slug should be valid"),
             created,
             store: "file".to_owned(),
-            runtime: "herdr".to_owned(),
             roles,
-            runtime_handles: BTreeMap::new(),
             artifacts: serde_json::json!({}),
             extra: BTreeMap::new(),
         }

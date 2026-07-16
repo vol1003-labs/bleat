@@ -25,7 +25,6 @@ pub fn join(
         .and_modify(|record| record.registered = registered)
         .or_insert_with(|| RoleRecord {
             registered,
-            cmd: None,
             extra: Default::default(),
         });
     atomic_replace(&session_path.session_json(), &encode_session(&session)?)
