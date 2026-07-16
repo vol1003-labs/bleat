@@ -33,8 +33,12 @@ pub enum Command {
         body: Option<String>,
     },
     Read {
-        #[arg(long)]
+        #[arg(long, conflicts_with = "wait")]
         peek: bool,
+        #[arg(long, conflicts_with = "peek")]
+        wait: bool,
+        #[arg(long, requires = "wait")]
+        timeout: Option<u64>,
     },
     Status,
     Log,
