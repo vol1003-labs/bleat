@@ -158,13 +158,13 @@ pub fn resolve_session(
             continue;
         }
         let name = entry.file_name().into_string().map_err(|_| {
-            BleatError::Runtime(format!(
+            BleatError::Execution(format!(
                 "session directory name is not UTF-8: `{}`",
                 entry.path().display()
             ))
         })?;
         let slug = Slug::parse(&name).map_err(|_| {
-            BleatError::Runtime(format!(
+            BleatError::Execution(format!(
                 "invalid session directory `{}`",
                 entry.path().display()
             ))
@@ -185,7 +185,7 @@ pub fn resolve_session(
     });
     let multiple = candidates.len() > 1;
     let (path, _) = candidates.into_iter().next().ok_or_else(|| {
-        BleatError::Runtime("session candidates disappeared during resolution".to_owned())
+        BleatError::Execution("session candidates disappeared during resolution".to_owned())
     })?;
     let warning = multiple.then(|| {
         format!(
@@ -215,7 +215,7 @@ fn ensure_matching_slug(path: &SessionPath, session: &Session) -> Result<(), Ble
     if path.slug == session.slug {
         Ok(())
     } else {
-        Err(BleatError::Runtime(format!(
+        Err(BleatError::Execution(format!(
             "session directory `{}` contains slug `{}`",
             path.slug.as_str(),
             session.slug.as_str()
@@ -224,18 +224,18 @@ fn ensure_matching_slug(path: &SessionPath, session: &Session) -> Result<(), Ble
 }
 
 fn session_io_error(action: &str, path: &Path, source: io::Error) -> BleatError {
-    BleatError::Runtime(format!("failed to {action} `{}`: {source}", path.display()))
+    BleatError::Execution(format!("failed to {action} `{}`: {source}", path.display()))
 }
 
 pub fn load_session(path: &Path) -> Result<Session, BleatError> {
     let bytes = fs::read(path).map_err(|source| {
-        BleatError::Runtime(format!(
+        BleatError::Execution(format!(
             "failed to read session `{}`: {source}",
             path.display()
         ))
     })?;
     let session: Session = serde_json::from_slice(&bytes).map_err(|source| {
-        BleatError::Runtime(format!(
+        BleatError::Execution(format!(
             "failed to decode session `{}`: {source}",
             path.display()
         ))
@@ -247,7 +247,7 @@ pub fn load_session(path: &Path) -> Result<Session, BleatError> {
 pub fn encode_session(session: &Session) -> Result<Vec<u8>, BleatError> {
     validate_version(session.version)?;
     let mut bytes = serde_json::to_vec_pretty(session)
-        .map_err(|source| BleatError::Runtime(format!("failed to encode session: {source}")))?;
+        .map_err(|source| BleatError::Execution(format!("failed to encode session: {source}")))?;
     bytes.push(b'\n');
     Ok(bytes)
 }
@@ -256,7 +256,7 @@ fn validate_version(version: u32) -> Result<(), BleatError> {
     if version == SESSION_VERSION {
         Ok(())
     } else {
-        Err(BleatError::Runtime(format!(
+        Err(BleatError::Execution(format!(
             "unsupported session version {version}; expected {SESSION_VERSION}"
         )))
     }
@@ -321,7 +321,7 @@ mod tests {
 
         let error = load_session(&path).expect_err("version 2 should be rejected");
 
-        assert!(matches!(error, crate::error::BleatError::Runtime(_)));
+        assert!(matches!(error, crate::error::BleatError::Execution(_)));
         assert!(error.to_string().contains("unsupported session version 2"));
     }
 
@@ -459,7 +459,7 @@ mod tests {
         let error = resolve_session(sandbox.path(), None, None)
             .expect_err("corrupt session should not be ignored");
 
-        assert!(matches!(error, BleatError::Runtime(_)));
+        assert!(matches!(error, BleatError::Execution(_)));
     }
 
     #[test]
@@ -471,7 +471,7 @@ mod tests {
         let error = resolve_session(sandbox.path(), None, None)
             .expect_err("invalid stored slug should not be a usage error");
 
-        assert!(matches!(error, BleatError::Runtime(_)));
+        assert!(matches!(error, BleatError::Execution(_)));
         assert!(error.to_string().contains("invalid session directory"));
     }
 

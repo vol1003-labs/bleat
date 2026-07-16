@@ -29,7 +29,7 @@ pub fn read_body<R: Read>(
             return read_stdin(stdin);
         }
         return fs::read_to_string(path).map_err(|source| {
-            BleatError::Runtime(format!(
+            BleatError::Execution(format!(
                 "failed to read message body `{}`: {source}",
                 path.display()
             ))
@@ -47,7 +47,7 @@ pub fn read_body<R: Read>(
 fn read_stdin<R: Read>(stdin: &mut R) -> Result<String, BleatError> {
     let mut body = String::new();
     stdin.read_to_string(&mut body).map_err(|source| {
-        BleatError::Runtime(format!("failed to read message body from stdin: {source}"))
+        BleatError::Execution(format!("failed to read message body from stdin: {source}"))
     })?;
     Ok(body)
 }
@@ -215,7 +215,7 @@ mod tests {
         let error = read_body(None, Some(&path), &mut stdin, true)
             .expect_err("non-UTF-8 file body should fail");
 
-        assert!(matches!(error, BleatError::Runtime(_)));
+        assert!(matches!(error, BleatError::Execution(_)));
     }
 
     #[test]
@@ -225,7 +225,7 @@ mod tests {
         let error =
             read_body(None, None, &mut stdin, false).expect_err("non-UTF-8 stdin body should fail");
 
-        assert!(matches!(error, BleatError::Runtime(_)));
+        assert!(matches!(error, BleatError::Execution(_)));
     }
 
     #[test]

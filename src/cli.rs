@@ -1,4 +1,3 @@
-use std::ffi::OsString;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
@@ -22,11 +21,6 @@ pub enum Command {
         slug: String,
     },
     Join,
-    Spawn {
-        role: String,
-        #[arg(last = true, required = true)]
-        argv: Vec<OsString>,
-    },
     Send {
         #[arg(long)]
         to: String,
@@ -37,9 +31,6 @@ pub enum Command {
         #[arg(long)]
         file: Option<PathBuf>,
         body: Option<String>,
-    },
-    Nudge {
-        role: String,
     },
     Read {
         #[arg(long)]

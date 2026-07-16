@@ -107,7 +107,7 @@ fn required_field<'a>(
 }
 
 fn decode_error(detail: &str) -> BleatError {
-    BleatError::Runtime(format!("failed to decode message: {detail}"))
+    BleatError::Execution(format!("failed to decode message: {detail}"))
 }
 
 #[cfg(test)]
@@ -211,7 +211,7 @@ mod tests {
 
         let error = decode(2, source).expect_err("invalid from should fail");
 
-        assert!(matches!(error, BleatError::Runtime(_)));
+        assert!(matches!(error, BleatError::Execution(_)));
         assert!(error.to_string().contains("invalid from"));
     }
 

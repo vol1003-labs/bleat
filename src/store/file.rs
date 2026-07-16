@@ -65,7 +65,7 @@ impl Store for FileStore {
         let mut messages = Vec::new();
         for (id, path) in message_paths(&messages_dir)? {
             let source = fs::read_to_string(&path).map_err(|source| {
-                BleatError::Runtime(format!(
+                BleatError::Execution(format!(
                     "failed to read message `{}`: {source}",
                     path.display()
                 ))
@@ -82,9 +82,9 @@ impl Store for FileStore {
             Ok(value) => value
                 .trim()
                 .parse()
-                .map_err(|_| BleatError::Runtime(format!("invalid cursor `{}`", path.display()))),
+                .map_err(|_| BleatError::Execution(format!("invalid cursor `{}`", path.display()))),
             Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(0),
-            Err(source) => Err(BleatError::Runtime(format!(
+            Err(source) => Err(BleatError::Execution(format!(
                 "failed to read cursor `{}`: {source}",
                 path.display()
             ))),
@@ -120,12 +120,12 @@ fn next_message_id(messages_dir: &Path) -> Result<u64, BleatError> {
         .unwrap_or(0);
     largest
         .checked_add(1)
-        .ok_or_else(|| BleatError::Runtime("message id overflow".to_owned()))
+        .ok_or_else(|| BleatError::Execution("message id overflow".to_owned()))
 }
 
 fn message_paths(messages_dir: &Path) -> Result<Vec<(u64, PathBuf)>, BleatError> {
     let entries = fs::read_dir(messages_dir).map_err(|source| {
-        BleatError::Runtime(format!(
+        BleatError::Execution(format!(
             "failed to read messages directory `{}`: {source}",
             messages_dir.display()
         ))
@@ -133,10 +133,10 @@ fn message_paths(messages_dir: &Path) -> Result<Vec<(u64, PathBuf)>, BleatError>
     let mut paths = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|source| {
-            BleatError::Runtime(format!("failed to read message entry: {source}"))
+            BleatError::Execution(format!("failed to read message entry: {source}"))
         })?;
         let name = entry.file_name().into_string().map_err(|_| {
-            BleatError::Runtime(format!(
+            BleatError::Execution(format!(
                 "invalid message filename `{}`",
                 entry.path().display()
             ))
@@ -148,7 +148,7 @@ fn message_paths(messages_dir: &Path) -> Result<Vec<(u64, PathBuf)>, BleatError>
             .strip_suffix(".md")
             .and_then(|stem| stem.parse::<u64>().ok())
             .filter(|id| *id > 0 && format!("{id:04}.md") == name)
-            .ok_or_else(|| BleatError::Runtime(format!("invalid message filename `{name}`")))?;
+            .ok_or_else(|| BleatError::Execution(format!("invalid message filename `{name}`")))?;
         paths.push((id, entry.path()));
     }
     Ok(paths)
@@ -295,7 +295,7 @@ mod tests {
 
         let error = store.all().expect_err("malformed filename should fail");
 
-        assert!(matches!(error, BleatError::Runtime(_)));
+        assert!(matches!(error, BleatError::Execution(_)));
         assert!(error.to_string().contains("invalid message filename"));
     }
 
@@ -310,7 +310,7 @@ mod tests {
 
         let error = store.all().expect_err("malformed message should fail");
 
-        assert!(matches!(error, BleatError::Runtime(_)));
+        assert!(matches!(error, BleatError::Execution(_)));
         assert!(error.to_string().contains("failed to decode message"));
     }
 
@@ -463,7 +463,7 @@ mod tests {
 
         let error = store.cursor(&role).expect_err("broken cursor should fail");
 
-        assert!(matches!(error, BleatError::Runtime(_)));
+        assert!(matches!(error, BleatError::Execution(_)));
         assert!(error.to_string().contains("invalid cursor"));
     }
 
