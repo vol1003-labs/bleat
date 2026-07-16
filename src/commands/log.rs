@@ -9,6 +9,8 @@ pub fn log<S: Store>(store: &S) -> Result<String, BleatError> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use chrono::DateTime;
 
     use super::*;
@@ -78,6 +80,15 @@ mod tests {
 
         fn unread_count(&self, _role: &Role) -> Result<usize, BleatError> {
             unreachable!("log must not count unread messages")
+        }
+
+        fn wait_unread(
+            &self,
+            _role: &Role,
+            _timeout: Duration,
+            _poll_interval: Duration,
+        ) -> Result<Option<Vec<Message>>, BleatError> {
+            unreachable!("log must not wait for messages")
         }
     }
 

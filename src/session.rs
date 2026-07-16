@@ -10,7 +10,6 @@ use serde_json::Value;
 use crate::error::BleatError;
 use crate::fs::atomic_replace;
 use crate::identity::{Role, Slug};
-use crate::runtime::RuntimeHandle;
 
 pub const SESSION_VERSION: u32 = 1;
 
@@ -20,9 +19,7 @@ pub struct Session {
     pub slug: Slug,
     pub created: DateTime<FixedOffset>,
     pub store: String,
-    pub runtime: String,
     pub roles: BTreeMap<Role, RoleRecord>,
-    pub runtime_handles: BTreeMap<Role, Value>,
     pub artifacts: Value,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
@@ -31,8 +28,6 @@ pub struct Session {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RoleRecord {
     pub registered: DateTime<FixedOffset>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cmd: Option<Vec<String>>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
@@ -80,26 +75,6 @@ pub fn create_session(
     role: Role,
     created: DateTime<FixedOffset>,
 ) -> Result<SessionPath, BleatError> {
-    create_session_with_runtime_handle(root, slug, role, created, None)
-}
-
-pub(crate) fn create_session_with_handle<H: RuntimeHandle>(
-    root: &Path,
-    slug: Slug,
-    role: Role,
-    created: DateTime<FixedOffset>,
-    handle: H,
-) -> Result<SessionPath, BleatError> {
-    create_session_with_runtime_handle(root, slug, role, created, Some(handle.into_value()?))
-}
-
-fn create_session_with_runtime_handle(
-    root: &Path,
-    slug: Slug,
-    role: Role,
-    created: DateTime<FixedOffset>,
-    handle: Option<Value>,
-) -> Result<SessionPath, BleatError> {
     let bleat_root = root.join(".bleat");
     fs::create_dir_all(&bleat_root)
         .map_err(|source| session_io_error("create bleat directory", &bleat_root, source))?;
@@ -122,7 +97,7 @@ fn create_session_with_runtime_handle(
         }
     }
 
-    let result = initialize_session(&path, slug, role, created, handle);
+    let result = initialize_session(&path, slug, role, created);
     if result.is_err() {
         let _ = fs::remove_dir_all(&session_dir);
     }
@@ -134,20 +109,15 @@ fn initialize_session(
     slug: Slug,
     role: Role,
     created: DateTime<FixedOffset>,
-    handle: Option<Value>,
 ) -> Result<(), BleatError> {
     fs::create_dir(path.messages_dir()).map_err(|source| {
         session_io_error("create messages directory", &path.messages_dir(), source)
     })?;
-    let runtime_handles = handle
-        .map(|handle| BTreeMap::from([(role.clone(), handle)]))
-        .unwrap_or_default();
     let mut roles = BTreeMap::new();
     roles.insert(
         role,
         RoleRecord {
             registered: created,
-            cmd: None,
             extra: BTreeMap::new(),
         },
     );
@@ -156,9 +126,7 @@ fn initialize_session(
         slug,
         created,
         store: "file".to_owned(),
-        runtime: "herdr".to_owned(),
         roles,
-        runtime_handles,
         artifacts: serde_json::json!({}),
         extra: BTreeMap::new(),
     };
@@ -190,13 +158,13 @@ pub fn resolve_session(
             continue;
         }
         let name = entry.file_name().into_string().map_err(|_| {
-            BleatError::Runtime(format!(
+            BleatError::Execution(format!(
                 "session directory name is not UTF-8: `{}`",
                 entry.path().display()
             ))
         })?;
         let slug = Slug::parse(&name).map_err(|_| {
-            BleatError::Runtime(format!(
+            BleatError::Execution(format!(
                 "invalid session directory `{}`",
                 entry.path().display()
             ))
@@ -217,7 +185,7 @@ pub fn resolve_session(
     });
     let multiple = candidates.len() > 1;
     let (path, _) = candidates.into_iter().next().ok_or_else(|| {
-        BleatError::Runtime("session candidates disappeared during resolution".to_owned())
+        BleatError::Execution("session candidates disappeared during resolution".to_owned())
     })?;
     let warning = multiple.then(|| {
         format!(
@@ -247,7 +215,7 @@ fn ensure_matching_slug(path: &SessionPath, session: &Session) -> Result<(), Ble
     if path.slug == session.slug {
         Ok(())
     } else {
-        Err(BleatError::Runtime(format!(
+        Err(BleatError::Execution(format!(
             "session directory `{}` contains slug `{}`",
             path.slug.as_str(),
             session.slug.as_str()
@@ -256,18 +224,18 @@ fn ensure_matching_slug(path: &SessionPath, session: &Session) -> Result<(), Ble
 }
 
 fn session_io_error(action: &str, path: &Path, source: io::Error) -> BleatError {
-    BleatError::Runtime(format!("failed to {action} `{}`: {source}", path.display()))
+    BleatError::Execution(format!("failed to {action} `{}`: {source}", path.display()))
 }
 
 pub fn load_session(path: &Path) -> Result<Session, BleatError> {
     let bytes = fs::read(path).map_err(|source| {
-        BleatError::Runtime(format!(
+        BleatError::Execution(format!(
             "failed to read session `{}`: {source}",
             path.display()
         ))
     })?;
     let session: Session = serde_json::from_slice(&bytes).map_err(|source| {
-        BleatError::Runtime(format!(
+        BleatError::Execution(format!(
             "failed to decode session `{}`: {source}",
             path.display()
         ))
@@ -279,7 +247,7 @@ pub fn load_session(path: &Path) -> Result<Session, BleatError> {
 pub fn encode_session(session: &Session) -> Result<Vec<u8>, BleatError> {
     validate_version(session.version)?;
     let mut bytes = serde_json::to_vec_pretty(session)
-        .map_err(|source| BleatError::Runtime(format!("failed to encode session: {source}")))?;
+        .map_err(|source| BleatError::Execution(format!("failed to encode session: {source}")))?;
     bytes.push(b'\n');
     Ok(bytes)
 }
@@ -288,7 +256,7 @@ fn validate_version(version: u32) -> Result<(), BleatError> {
     if version == SESSION_VERSION {
         Ok(())
     } else {
-        Err(BleatError::Runtime(format!(
+        Err(BleatError::Execution(format!(
             "unsupported session version {version}; expected {SESSION_VERSION}"
         )))
     }
@@ -309,108 +277,19 @@ mod tests {
       "slug": "2026-07-13-feature",
       "created": "2026-07-13T10:00:00+09:00",
       "store": "file",
-      "runtime": "herdr",
       "roles": {
         "claude": {
           "registered": "2026-07-13T10:00:00+09:00",
           "future_role_field": { "enabled": true }
         },
         "codex": {
-          "registered": "2026-07-13T10:01:00+09:00",
-          "cmd": ["codex", "--model", "gpt"]
+          "registered": "2026-07-13T10:01:00+09:00"
         }
-      },
-      "runtime_handles": {
-        "claude": { "terminal_id": "term_1", "future_handle": 7 }
       },
       "artifacts": { "spec": ".superpowers/specs/feature.md" },
       "future_top_field": { "enabled": true }
     }
     "#;
-
-    #[derive(Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
-    struct TestHandle {
-        socket: String,
-        process: u64,
-    }
-
-    impl crate::runtime::RuntimeHandle for TestHandle {}
-
-    #[derive(serde::Deserialize)]
-    struct SerializationFailingHandle {
-        bleat_root: PathBuf,
-    }
-
-    impl serde::Serialize for SerializationFailingHandle {
-        fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: serde::Serializer,
-        {
-            assert!(!self.bleat_root.exists());
-            Err(<S::Error as serde::ser::Error>::custom(
-                "runtime handle serialization failed",
-            ))
-        }
-    }
-
-    impl crate::runtime::RuntimeHandle for SerializationFailingHandle {}
-
-    #[test]
-    fn create_session_persists_an_opaque_runtime_handle() {
-        let sandbox = tempdir().expect("sandbox should be created");
-        let role = Role::parse("worker").expect("role should be valid");
-
-        let path = create_session_with_handle(
-            sandbox.path(),
-            Slug::parse("feature").expect("slug should be valid"),
-            role.clone(),
-            DateTime::parse_from_rfc3339("2026-07-16T10:00:00+09:00")
-                .expect("timestamp should be valid"),
-            TestHandle {
-                socket: "runtime.sock".to_owned(),
-                process: 42,
-            },
-        )
-        .expect("session should be created");
-
-        let session = load_session(&path.session_json()).expect("session should load");
-        assert_eq!(
-            session.runtime_handles[&role],
-            serde_json::json!({ "socket": "runtime.sock", "process": 42 })
-        );
-        let restored = TestHandle::from_value(session.runtime_handles[&role].clone())
-            .expect("handle should restore");
-        assert_eq!(
-            restored,
-            TestHandle {
-                socket: "runtime.sock".to_owned(),
-                process: 42,
-            }
-        );
-    }
-
-    #[test]
-    fn runtime_handle_serialization_failure_does_not_create_an_incomplete_session() {
-        let sandbox = tempdir().expect("sandbox should be created");
-        let bleat_root = sandbox.path().join(".bleat");
-
-        let error = create_session_with_handle(
-            sandbox.path(),
-            Slug::parse("feature").expect("slug should be valid"),
-            Role::parse("worker").expect("role should be valid"),
-            DateTime::parse_from_rfc3339("2026-07-16T10:00:00+09:00")
-                .expect("timestamp should be valid"),
-            SerializationFailingHandle {
-                bleat_root: bleat_root.clone(),
-            },
-        )
-        .expect_err("serialization failure should fail session creation");
-
-        assert!(
-            matches!(error, BleatError::Runtime(message) if message.contains("encode runtime handle") && message.contains("runtime handle serialization failed"))
-        );
-        assert!(!bleat_root.exists());
-    }
 
     #[test]
     fn session_round_trip_preserves_known_and_unknown_fields() {
@@ -427,7 +306,6 @@ mod tests {
             value["roles"]["claude"]["future_role_field"]["enabled"],
             true
         );
-        assert_eq!(value["runtime_handles"]["claude"]["future_handle"], 7);
         assert_eq!(value["artifacts"]["spec"], ".superpowers/specs/feature.md");
     }
 
@@ -443,7 +321,7 @@ mod tests {
 
         let error = load_session(&path).expect_err("version 2 should be rejected");
 
-        assert!(matches!(error, crate::error::BleatError::Runtime(_)));
+        assert!(matches!(error, crate::error::BleatError::Execution(_)));
         assert!(error.to_string().contains("unsupported session version 2"));
     }
 
@@ -481,6 +359,33 @@ mod tests {
         assert_eq!(session.slug.as_str(), "feature");
         assert!(session.roles.keys().any(|role| role.as_str() == "claude"));
         assert!(path.messages_dir().is_dir());
+    }
+
+    #[test]
+    fn create_session_writes_the_version_one_schema() {
+        let sandbox = tempdir().expect("sandbox should be created");
+        let path = create_test_session(sandbox.path(), "feature", "2026-07-16T10:00:00+09:00");
+
+        let value: Value = serde_json::from_slice(
+            &fs::read(path.session_json()).expect("session should be readable"),
+        )
+        .expect("session should decode");
+
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "version": 1,
+                "slug": "feature",
+                "created": "2026-07-16T10:00:00+09:00",
+                "store": "file",
+                "roles": {
+                    "claude": {
+                        "registered": "2026-07-16T10:00:00+09:00"
+                    }
+                },
+                "artifacts": {}
+            })
+        );
     }
 
     #[test]
@@ -554,7 +459,7 @@ mod tests {
         let error = resolve_session(sandbox.path(), None, None)
             .expect_err("corrupt session should not be ignored");
 
-        assert!(matches!(error, BleatError::Runtime(_)));
+        assert!(matches!(error, BleatError::Execution(_)));
     }
 
     #[test]
@@ -566,7 +471,7 @@ mod tests {
         let error = resolve_session(sandbox.path(), None, None)
             .expect_err("invalid stored slug should not be a usage error");
 
-        assert!(matches!(error, BleatError::Runtime(_)));
+        assert!(matches!(error, BleatError::Execution(_)));
         assert!(error.to_string().contains("invalid session directory"));
     }
 

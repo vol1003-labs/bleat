@@ -29,7 +29,7 @@ pub fn read_body<R: Read>(
             return read_stdin(stdin);
         }
         return fs::read_to_string(path).map_err(|source| {
-            BleatError::Runtime(format!(
+            BleatError::Execution(format!(
                 "failed to read message body `{}`: {source}",
                 path.display()
             ))
@@ -47,7 +47,7 @@ pub fn read_body<R: Read>(
 fn read_stdin<R: Read>(stdin: &mut R) -> Result<String, BleatError> {
     let mut body = String::new();
     stdin.read_to_string(&mut body).map_err(|source| {
-        BleatError::Runtime(format!("failed to read message body from stdin: {source}"))
+        BleatError::Execution(format!("failed to read message body from stdin: {source}"))
     })?;
     Ok(body)
 }
@@ -97,6 +97,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::fs;
     use std::io::Cursor;
+    use std::time::Duration;
 
     use chrono::DateTime;
     use tempfile::tempdir;
@@ -215,7 +216,7 @@ mod tests {
         let error = read_body(None, Some(&path), &mut stdin, true)
             .expect_err("non-UTF-8 file body should fail");
 
-        assert!(matches!(error, BleatError::Runtime(_)));
+        assert!(matches!(error, BleatError::Execution(_)));
     }
 
     #[test]
@@ -225,7 +226,7 @@ mod tests {
         let error =
             read_body(None, None, &mut stdin, false).expect_err("non-UTF-8 stdin body should fail");
 
-        assert!(matches!(error, BleatError::Runtime(_)));
+        assert!(matches!(error, BleatError::Execution(_)));
     }
 
     #[test]
@@ -365,6 +366,15 @@ mod tests {
         fn unread_count(&self, _role: &Role) -> Result<usize, BleatError> {
             unreachable!("send must not count messages")
         }
+
+        fn wait_unread(
+            &self,
+            _role: &Role,
+            _timeout: Duration,
+            _poll_interval: Duration,
+        ) -> Result<Option<Vec<Message>>, BleatError> {
+            unreachable!("send must not wait for messages")
+        }
     }
 
     fn session_with_roles(names: &[&str]) -> Session {
@@ -377,7 +387,6 @@ mod tests {
                     role(name),
                     RoleRecord {
                         registered: created,
-                        cmd: None,
                         extra: BTreeMap::new(),
                     },
                 )
@@ -388,9 +397,7 @@ mod tests {
             slug: crate::identity::Slug::parse("session").expect("slug should be valid"),
             created,
             store: "file".to_owned(),
-            runtime: "herdr".to_owned(),
             roles,
-            runtime_handles: BTreeMap::new(),
             artifacts: serde_json::json!({}),
             extra: BTreeMap::new(),
         }

@@ -60,7 +60,7 @@ impl SessionLock {
                         }
                     }
                     if Instant::now() >= deadline {
-                        return Err(BleatError::Runtime(format!(
+                        return Err(BleatError::Execution(format!(
                             "timed out acquiring session lock `{}`",
                             lock_dir.display()
                         )));
@@ -110,7 +110,7 @@ fn process_is_dead(pid: i32) -> Result<bool, BleatError> {
     match kill(Pid::from_raw(pid), None) {
         Ok(()) | Err(Errno::EPERM) => Ok(false),
         Err(Errno::ESRCH) => Ok(true),
-        Err(source) => Err(BleatError::Runtime(format!(
+        Err(source) => Err(BleatError::Execution(format!(
             "failed to inspect lock owner pid {pid}: {source}"
         ))),
     }
@@ -134,7 +134,7 @@ fn lock_directory_is_old(lock_dir: &Path, stale_after: Duration) -> Result<bool,
 
 pub fn atomic_replace(path: &Path, bytes: &[u8]) -> Result<(), BleatError> {
     let parent = path.parent().ok_or_else(|| {
-        BleatError::Runtime(format!("file path has no parent: `{}`", path.display()))
+        BleatError::Execution(format!("file path has no parent: `{}`", path.display()))
     })?;
     let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let temporary = parent.join(format!(".tmp-{}-{sequence}", std::process::id()));
@@ -190,7 +190,7 @@ pub fn cleanup_old_message_temps(
 }
 
 fn io_error(action: &str, path: &Path, source: io::Error) -> BleatError {
-    BleatError::Runtime(format!("failed to {action} `{}`: {source}", path.display()))
+    BleatError::Execution(format!("failed to {action} `{}`: {source}", path.display()))
 }
 
 #[cfg(test)]

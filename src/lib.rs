@@ -1,3 +1,4 @@
+pub mod app;
 pub mod cli;
 pub mod commands;
 pub mod error;
@@ -5,6 +6,5 @@ pub mod fs;
 pub mod identity;
 pub mod message;
 pub mod root;
-pub mod runtime;
 pub mod session;
 pub mod store;
