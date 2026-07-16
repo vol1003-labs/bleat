@@ -3,6 +3,7 @@ pub mod join;
 pub mod log;
 pub mod read;
 pub mod send;
+pub mod status;
 
 use crate::message::{Message, encode};
 
