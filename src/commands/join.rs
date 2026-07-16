@@ -79,11 +79,11 @@ mod tests {
 
     impl RuntimeHandle for SerializationFailingHandle {}
 
-    struct SerializationFailingRuntime {
+    struct RuntimeReturningUnserializableHandle {
         lock_path: PathBuf,
     }
 
-    impl Runtime for SerializationFailingRuntime {
+    impl Runtime for RuntimeReturningUnserializableHandle {
         type Handle = SerializationFailingHandle;
 
         fn current_handle(&self) -> Result<Self::Handle, BleatError> {
@@ -362,7 +362,7 @@ mod tests {
             &path,
             role("codex"),
             timestamp("2026-07-16T10:00:00+09:00"),
-            &SerializationFailingRuntime {
+            &RuntimeReturningUnserializableHandle {
                 lock_path: lock_path.clone(),
             },
         )
