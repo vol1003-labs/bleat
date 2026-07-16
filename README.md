@@ -32,18 +32,28 @@ cargo install --path .
 
 Two agents, `driver` and `reviewer`, sharing one project directory.
 
-Terminal A (driver):
+Terminal A (driver) — create the session:
 
 ```sh
 bleat init demo-session --as driver
+```
+
+Terminal B (reviewer) — join it:
+
+```sh
+bleat join --as reviewer
+```
+
+Terminal A — send a question and keep working:
+
+```sh
 bleat send --as driver --to reviewer --type question "Ready for review?"
 # keep working; nothing blocks
 ```
 
-Terminal B (reviewer):
+Terminal B — read and reply:
 
 ```sh
-bleat join --as reviewer
 bleat read --as reviewer
 ```
 
@@ -99,6 +109,7 @@ Role and session resolve from `--as` / `BLEAT_ROLE` and `--session` /
 `BLEAT_SESSION` (falling back to the most recently created session).
 Message types are free-form; the starter vocabulary is `kick`, `question`,
 `answer`, `report`.
+`send` requires the recipient role to be registered in the session first (usage error otherwise).
 
 Exit codes:
 
