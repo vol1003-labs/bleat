@@ -1,4 +1,5 @@
 use chrono::{DateTime, FixedOffset};
+use std::time::Duration;
 
 use crate::error::BleatError;
 use crate::identity::{MessageType, Role};
@@ -21,4 +22,10 @@ pub trait Store {
     fn cursor(&self, role: &Role) -> Result<u64, BleatError>;
     fn read_unread(&self, role: &Role, peek: bool) -> Result<Vec<Message>, BleatError>;
     fn unread_count(&self, role: &Role) -> Result<usize, BleatError>;
+    fn wait_unread(
+        &self,
+        role: &Role,
+        timeout: Duration,
+        poll_interval: Duration,
+    ) -> Result<Option<Vec<Message>>, BleatError>;
 }

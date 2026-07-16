@@ -97,6 +97,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::fs;
     use std::io::Cursor;
+    use std::time::Duration;
 
     use chrono::DateTime;
     use tempfile::tempdir;
@@ -364,6 +365,15 @@ mod tests {
 
         fn unread_count(&self, _role: &Role) -> Result<usize, BleatError> {
             unreachable!("send must not count messages")
+        }
+
+        fn wait_unread(
+            &self,
+            _role: &Role,
+            _timeout: Duration,
+            _poll_interval: Duration,
+        ) -> Result<Option<Vec<Message>>, BleatError> {
+            unreachable!("send must not wait for messages")
         }
     }
 

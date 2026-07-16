@@ -1,7 +1,8 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::thread;
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::error::BleatError;
 use crate::fs::{SessionLock, atomic_replace, cleanup_old_message_temps};
@@ -110,6 +111,26 @@ impl Store for FileStore {
         let cursor = self.cursor(role)?;
         Ok(self.unread_after(role, cursor)?.len())
     }
+
+    fn wait_unread(
+        &self,
+        role: &Role,
+        timeout: Duration,
+        poll_interval: Duration,
+    ) -> Result<Option<Vec<Message>>, BleatError> {
+        let started = Instant::now();
+        loop {
+            let messages = self.read_unread(role, false)?;
+            if !messages.is_empty() {
+                return Ok(Some(messages));
+            }
+            let elapsed = started.elapsed();
+            if elapsed >= timeout {
+                return Ok(None);
+            }
+            thread::sleep(poll_interval.min(timeout - elapsed));
+        }
+    }
 }
 
 fn next_message_id(messages_dir: &Path) -> Result<u64, BleatError> {
@@ -159,6 +180,7 @@ mod tests {
     use std::fs;
     use std::sync::{Arc, Barrier};
     use std::thread;
+    use std::time::Duration;
 
     use chrono::DateTime;
     use tempfile::tempdir;
@@ -532,8 +554,84 @@ mod tests {
         assert_eq!(count, 1);
     }
 
+    #[test]
+    fn wait_unread_returns_existing_messages_immediately() {
+        let sandbox = tempdir().expect("sandbox should be created");
+        fs::create_dir(sandbox.path().join("messages"))
+            .expect("messages directory should be created");
+        let store = FileStore::new(sandbox.path().to_path_buf());
+        store
+            .publish(draft("already here"))
+            .expect("message should publish");
+
+        let messages = store
+            .wait_unread(
+                &role("claude"),
+                Duration::from_secs(1),
+                Duration::from_millis(5),
+            )
+            .expect("wait should succeed")
+            .expect("existing unread should be returned");
+
+        assert_eq!(messages[0].body, "already here");
+    }
+
+    #[test]
+    fn wait_unread_returns_a_message_published_while_waiting() {
+        let sandbox = tempdir().expect("sandbox should be created");
+        fs::create_dir(sandbox.path().join("messages"))
+            .expect("messages directory should be created");
+        let store = Arc::new(FileStore::new(sandbox.path().to_path_buf()));
+        let waiting = Arc::clone(&store);
+        let barrier = Arc::new(Barrier::new(2));
+        let waiting_barrier = Arc::clone(&barrier);
+        let handle = thread::spawn(move || {
+            waiting_barrier.wait();
+            waiting.wait_unread(
+                &role("claude"),
+                Duration::from_secs(1),
+                Duration::from_millis(5),
+            )
+        });
+        barrier.wait();
+        thread::sleep(Duration::from_millis(20));
+        store
+            .publish(draft("arrived later"))
+            .expect("message should publish");
+
+        let messages = handle
+            .join()
+            .expect("waiter should not panic")
+            .expect("wait should succeed")
+            .expect("new unread should be returned");
+
+        assert_eq!(messages[0].body, "arrived later");
+    }
+
+    #[test]
+    fn wait_unread_returns_none_after_the_timeout() {
+        let sandbox = tempdir().expect("sandbox should be created");
+        fs::create_dir(sandbox.path().join("messages"))
+            .expect("messages directory should be created");
+        let store = FileStore::new(sandbox.path().to_path_buf());
+
+        let result = store
+            .wait_unread(
+                &role("claude"),
+                Duration::from_millis(20),
+                Duration::from_millis(5),
+            )
+            .expect("wait should succeed");
+
+        assert!(result.is_none());
+    }
+
     fn draft(body: &str) -> Draft {
         draft_to(body, "claude")
+    }
+
+    fn role(value: &str) -> Role {
+        Role::parse(value).expect("role should be valid")
     }
 
     fn draft_to(body: &str, to: &str) -> Draft {
