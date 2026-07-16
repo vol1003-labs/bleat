@@ -8,3 +8,4 @@
 # direnv
 /.direnv
 .envrc
+.bleat/

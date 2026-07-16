@@ -120,20 +120,30 @@ Exit codes:
 | 2 | usage error (e.g. `--peek --wait` together, `--timeout 0`, sending to an unregistered role) |
 | 3 | `read --wait` timed out with no new messages |
 
-## Agent integration (Claude Code)
+## Agent integration
 
-A plugin under `plugins/claude/` teaches agents the CLI and the mail-model
-etiquette (send then keep working, wait for replies with a background
-`read --wait`, escalate on timeout):
+One canonical skill, `skills/bleat/SKILL.md`, teaches agents the CLI and
+the mail-model etiquette (send then keep working, wait for replies with a
+background `read --wait`, escalate on timeout). It follows the
+[Agent Skills](https://agentskills.io) open standard, so every harness
+consumes the same file.
+
+**Claude Code** — this repo is a plugin marketplace:
 
 ```
 /plugin marketplace add vol1003-labs/agent-messaging-cli
 /plugin install bleat
 ```
 
+**Codex CLI and other Agent Skills harnesses** — copy or symlink the skill
+into the harness's skills directory, e.g.:
+
+```sh
+ln -s "$(pwd)/skills/bleat" ~/.agents/skills/bleat
+```
+
 Set `BLEAT_ROLE` and `BLEAT_SESSION` in the agent's environment so it can
-omit `--as` / `--session`. Integrations for other harnesses (e.g. Codex)
-are planned to live alongside as `plugins/<harness>/`.
+omit `--as` / `--session`.
 
 ## Design principles
 

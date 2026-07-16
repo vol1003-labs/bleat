@@ -1,12 +1,13 @@
 {
   "name": "agent-messaging-cli",
+  "description": "bleat: mail-style messaging between coding agents",
   "owner": {
     "name": "vol1003-labs"
   },
   "plugins": [
     {
       "name": "bleat",
-      "source": "./plugins/claude",
+      "source": "./",
       "description": "Mail-style messaging between coding agents: send never blocks or wakes the receiver; read on your own schedule."
     }
   ]
